@@ -100,6 +100,8 @@ embedded-sdmmc = "0.7.0"
 bt-hci = { version = "0.1.0", default-features = false, features = ["defmt"] }
 trouble-host = { version = "0.1.0", features = ["defmt", "gatt"] }
 
+epd-waveshare = { version = "0.6.0", path = "../epd-waveshare" }
+
 [profile.release]
 debug = 2
 
