@@ -23,7 +23,7 @@ use embedded_graphics::{
 use embedded_hal_bus::spi::ExclusiveDevice;
 use epd_waveshare::{
     color::*,
-    epd4in2_v2::{self, Display4in2, Epd4in2},
+    epd4in2_v2::{self, DeepSleepMode, Display4in2, Epd4in2},
     graphics::{DisplayRotation, VarDisplay},
     prelude::*,
 };
@@ -63,33 +63,19 @@ async fn main(spawner: Spawner) {
     let mut epd4in2 = Epd4in2::new(&mut spi_dev, busy, dc, rst, &mut embassy_time::Delay, None)
         .expect("eink initalize error");
 
-    epd4in2
-        .set_refresh(&mut spi_dev, &mut Delay, RefreshLut::Quick)
-        .unwrap();
-    let (x, y, width, height) = (50, 50, 250, 250);
-    info!("Display setup");
-    //250*250
     let mut display = Display4in2::default();
     display.clear(Color::White).ok();
-    epd4in2
-        .update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay)
-        .unwrap();
 
-    display.set_rotation(DisplayRotation::Rotate0);
-    draw_text(&mut display, "Are you going to stop flashing?", 5, 50);
-
-    epd4in2.update_frame(&mut spi_dev, display.buffer(), &mut Delay);
-    epd4in2
-        .display_frame(&mut spi_dev, &mut Delay)
-        .expect("display frame new graphics");
-
-    let bmp_data = include_bytes!("../ferris_w_a_knife.bmp");
-    let bmp: Bmp<BinaryColor> = Bmp::from_slice(bmp_data).unwrap();
-
-    Image::new(&bmp, Point::new(50, 100)).draw(&mut display.color_converted());
     epd4in2.update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay);
 
+    epd4in2.sleep(&mut spi_dev, &mut Delay).unwrap();
+
     loop {}
+}
+
+fn draw_bmp(display: &mut impl DrawTarget<Color = Color>, bmp_data: &[u8], x: i32, y: i32) {
+    let bmp: Bmp<BinaryColor> = Bmp::from_slice(bmp_data).unwrap();
+    Image::new(&bmp, Point::new(x, y)).draw(&mut display.color_converted())?;
 }
 
 fn draw_text(display: &mut impl DrawTarget<Color = Color>, text: &str, x: i32, y: i32) {
