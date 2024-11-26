@@ -100,7 +100,8 @@ embedded-sdmmc = "0.7.0"
 bt-hci = { version = "0.1.0", default-features = false, features = ["defmt"] }
 trouble-host = { version = "0.1.0", features = ["defmt", "gatt"] }
 
-epd-waveshare = { version = "0.6.0", path = "../epd-waveshare" }
+epd-waveshare = { version = "0.6.0", features = ["graphics"] }
+tinybmp = "0.6.0"
 
 [profile.release]
 debug = 2
@@ -110,5 +111,6 @@ lto = true
 opt-level = "z"
 
 [patch.crates-io]
+epd-waveshare = { path = "../epd-waveshare" }
 trouble-host = { git = "https://github.com/embassy-rs/trouble.git", rev = "4b8c0f499b34e46ca23a56e2d1640ede371722cf" }
 embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "8803128707b8bd9fc9dcea392a62dfd42aa822d2" }

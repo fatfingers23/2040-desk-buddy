@@ -13,9 +13,11 @@ use embassy_rp::{
 use embassy_sync::blocking_mutex::{raw::NoopRawMutex, Mutex};
 use embassy_time::{Delay, Duration, Timer};
 use embedded_graphics::{
+    image::Image,
     mono_font::MonoTextStyleBuilder,
+    pixelcolor::BinaryColor,
     prelude::*,
-    primitives::{Circle, Line, PrimitiveStyleBuilder},
+    primitives::{Circle, Line, PrimitiveStyle, PrimitiveStyleBuilder},
     text::{Baseline, Text, TextStyleBuilder},
 };
 use embedded_hal_bus::spi::ExclusiveDevice;
@@ -27,6 +29,7 @@ use epd_waveshare::{
 };
 use serde::de;
 use static_cell::StaticCell;
+use tinybmp::Bmp;
 use {defmt_rtt as _, panic_probe as _};
 
 mod cyw43_driver;
@@ -60,25 +63,40 @@ async fn main(spawner: Spawner) {
     let mut epd4in2 = Epd4in2::new(&mut spi_dev, busy, dc, rst, &mut embassy_time::Delay, None)
         .expect("eink initalize error");
 
+    epd4in2
+        .set_refresh(&mut spi_dev, &mut Delay, RefreshLut::Quick)
+        .unwrap();
     let (x, y, width, height) = (50, 50, 250, 250);
     info!("Display setup");
     //250*250
     let mut display = Display4in2::default();
+    display.clear(Color::White).ok();
+    epd4in2
+        .update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay)
+        .unwrap();
 
     display.set_rotation(DisplayRotation::Rotate0);
-    draw_text(&mut display, "Sweet it's working", 5, 50);
+    draw_text(&mut display, "Are you going to stop flashing?", 5, 50);
 
-    epd4in2.update_frame(&mut spi_dev, display.buffer(), &mut embassy_time::Delay);
+    epd4in2.update_frame(&mut spi_dev, display.buffer(), &mut Delay);
     epd4in2
-        .display_frame(&mut spi_dev, &mut embassy_time::Delay)
+        .display_frame(&mut spi_dev, &mut Delay)
         .expect("display frame new graphics");
+
+    let bmp_data = include_bytes!("../ferris_w_a_knife.bmp");
+    let bmp: Bmp<BinaryColor> = Bmp::from_slice(bmp_data).unwrap();
+
+    Image::new(&bmp, Point::new(50, 100)).draw(&mut display.color_converted());
+    epd4in2.update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay);
+
+    loop {}
 }
 
 fn draw_text(display: &mut impl DrawTarget<Color = Color>, text: &str, x: i32, y: i32) {
     let style = MonoTextStyleBuilder::new()
         .font(&embedded_graphics::mono_font::ascii::FONT_10X20)
-        .text_color(Color::White)
-        .background_color(Color::Black)
+        .text_color(Color::Black)
+        .background_color(Color::White)
         .build();
 
     let text_style = TextStyleBuilder::new().baseline(Baseline::Top).build();
