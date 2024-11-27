@@ -2,7 +2,7 @@ use heapless::Vec;
 
 const _ENV_DATA: &str = include_str!("../.env");
 
-pub fn _env_value(key: &str) -> &'static str {
+pub fn env_value(key: &str) -> &'static str {
     for line in _ENV_DATA.lines() {
         let parts: Vec<&str, 2> = line.split('=').collect();
         if parts.len() == 2 {

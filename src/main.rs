@@ -1,9 +1,17 @@
 #![no_std]
 #![no_main]
 
+use core::str::from_utf8;
+
 use assign_resources::assign_resources;
+use cyw43::JoinOptions;
+use cyw43_driver::{net_task, setup_cyw43};
 use defmt::*;
 use embassy_executor::Spawner;
+use embassy_net::dns::DnsSocket;
+use embassy_net::tcp::client::{TcpClient, TcpClientState};
+use embassy_net::{Config, StackResources};
+use embassy_rp::clocks::RoscRng;
 use embassy_rp::peripherals::{self};
 use embassy_rp::{
     gpio::{Input, Level, Output, Pull},
@@ -17,7 +25,7 @@ use embassy_sync::{
     },
     channel,
 };
-use embassy_time::{Delay, Timer};
+use embassy_time::{Delay, Duration, Timer};
 use embedded_graphics::{
     image::Image,
     mono_font::MonoTextStyleBuilder,
@@ -27,11 +35,17 @@ use embedded_graphics::{
 };
 use embedded_hal_bus::spi::ExclusiveDevice;
 use embedded_sdmmc::TimeSource;
+use env::env_value;
 use epd_waveshare::{
     color::*,
     epd4in2_v2::{Display4in2, Epd4in2},
     prelude::*,
 };
+use io::easy_format;
+use rand::RngCore;
+use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
+use reqwless::request::Method;
+use serde::de;
 use static_cell::StaticCell;
 use tinybmp::Bmp;
 use {defmt_rtt as _, panic_probe as _};
@@ -84,32 +98,30 @@ assign_resources! {
         rst: PIN_12,
         busy: PIN_13,
 
-    }
+    },
+    cyw43_peripherals: Cyw43Peripherals {
+        pio: PIO0,
+        cs: PIN_23,
+        sck: PIN_24,
+        mosi: PIN_25,
+        miso: PIN_29,
+        dma: DMA_CH0,
+    },
     // add more resources to more structs if needed, for example defining one struct for each task
 }
 
 #[embassy_executor::main]
-async fn main(spawner: Spawner) -> ! {
+async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
     let r = split_resources! {p};
-    // let (_device, mut control) = setup_cyw43(
-    //     p.PIO0, p.PIN_23, p.PIN_24, p.PIN_25, p.PIN_29, p.DMA_CH0, spawner,
-    // )
-    // .await;
 
-    info!("Starting up");
     spawner.must_spawn(orchestrate(spawner));
+    spawner.must_spawn(wireless_task(spawner, r.cyw43_peripherals));
     spawner.must_spawn(display_task(r.display_peripherals));
-
-    loop {
-        Timer::after_millis(1_000).await;
-        info!("Hello, World!");
-    }
 }
 
 #[embassy_executor::task]
 async fn orchestrate(_spawner: Spawner) {
-    info!("Orchestrating task started");
     let mut state = State::new();
 
     // we need to have a receiver for the events
@@ -126,7 +138,6 @@ async fn orchestrate(_spawner: Spawner) {
 
 #[embassy_executor::task]
 pub async fn display_task(display_pins: DisplayPeripherals) {
-    info!("Display task started");
     let cs = Output::new(display_pins.cs, Level::High);
     let dc = Output::new(display_pins.dc, Level::High);
     let rst = Output::new(display_pins.rst, Level::High);
@@ -148,9 +159,10 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
 
     let mut display = Display4in2::default();
     display.clear(Color::White).ok();
+    // epd4in2.clear_frame(&mut spi_dev, &mut Delay);
+    epd4in2.update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay);
 
     draw_text(&mut display, "Hey", 5, 50);
-    epd4in2.update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay);
     draw_bmp(
         &mut display,
         include_bytes!("../ferris_w_a_knife.bmp"),
@@ -162,6 +174,139 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
 
     loop {
         Timer::after_millis(50).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
+    let mut rng = RoscRng;
+    let (net_device, mut control) = setup_cyw43(
+        cyw43_peripherals.pio,
+        cyw43_peripherals.cs,
+        cyw43_peripherals.sck,
+        cyw43_peripherals.mosi,
+        cyw43_peripherals.miso,
+        cyw43_peripherals.dma,
+        spawner,
+    )
+    .await;
+    debug!("Wireless task started");
+    control.gpio_set(0, true).await;
+
+    let config = Config::dhcpv4(Default::default());
+
+    // Generate random seed
+    let seed = rng.next_u64();
+
+    // Init network stack
+    static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
+    let (stack, runner) = embassy_net::new(
+        net_device,
+        config,
+        RESOURCES.init(StackResources::new()),
+        seed,
+    );
+
+    unwrap!(spawner.spawn(net_task(runner)));
+    let wifi_network = env_value("WIFI_SSID");
+    let wifi_password = env_value("WIFI_PASSWORD");
+    let lat = env_value("LAT");
+    let long = env_value("LON");
+    let unit = env_value("UNIT");
+    let timezone = env_value("TIMEZONE");
+
+    loop {
+        match control
+            .join(wifi_network, JoinOptions::new(wifi_password.as_bytes()))
+            .await
+        {
+            Ok(_) => break,
+            Err(err) => {
+                info!("join failed with status={}", err.status);
+            }
+        }
+    }
+
+    // Wait for DHCP, not necessary when using static IP
+    info!("waiting for DHCP...");
+    while !stack.is_config_up() {
+        Timer::after_millis(100).await;
+    }
+    info!("DHCP is now up!");
+
+    info!("waiting for link up...");
+    while !stack.is_link_up() {
+        Timer::after_millis(500).await;
+    }
+    info!("Link is up!");
+
+    info!("waiting for stack to be up...");
+    stack.wait_config_up().await;
+    info!("Stack is up!");
+    // And now we can use it!
+
+    // https://api.open-meteo.com/v1/forecast?latitude=35.7512&longitude=-86.93&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit=fahrenheit&timezone=America/Chicago
+    //Weather code meanings
+    //     WMO Weather interpretation codes (WW)
+    // Code 	Description
+    // 0 	Clear sky
+    // 1, 2, 3 	Mainly clear, partly cloudy, and overcast
+    // 45, 48 	Fog and depositing rime fog
+    // 51, 53, 55 	Drizzle: Light, moderate, and dense intensity
+    // 56, 57 	Freezing Drizzle: Light and dense intensity
+    // 61, 63, 65 	Rain: Slight, moderate and heavy intensity
+    // 66, 67 	Freezing Rain: Light and heavy intensity
+    // 71, 73, 75 	Snow fall: Slight, moderate, and heavy intensity
+    // 77 	Snow grains
+    // 80, 81, 82 	Rain showers: Slight, moderate, and violent
+    // 85, 86 	Snow showers slight and heavy
+    // 95 * 	Thunderstorm: Slight or moderate
+    // 96, 99 * 	Thunderstorm with slight and heavy hail
+    loop {
+        let mut rx_buffer = [0; 8192];
+        let mut tls_read_buffer = [0; 16640];
+        let mut tls_write_buffer = [0; 16640];
+
+        let client_state = TcpClientState::<1, 1024, 1024>::new();
+        let tcp_client = TcpClient::new(stack, &client_state);
+        let dns_client = DnsSocket::new(stack);
+        let tls_config = TlsConfig::new(
+            seed,
+            &mut tls_read_buffer,
+            &mut tls_write_buffer,
+            TlsVerify::None,
+        );
+
+        let mut http_client = HttpClient::new_with_tls(&tcp_client, &dns_client, tls_config);
+        //TODO find a way to do an acutal writer for this
+        // let url = easy_format::<32>(format_args!("https://api.open-meteo.com/v1/forecast?latitude={:?}&longitude={:?}&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit={:?}&timezone={:?}", lat, long, unit, timezone));
+        let url = "https://api.open-meteo.com/v1/forecast?latitude=35.7512&longitude=-86.93&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit=fahrenheit&timezone=America/Chicago";
+        let mut request = match http_client.request(Method::GET, &url).await {
+            Ok(req) => req,
+            Err(e) => {
+                error!("Failed to make HTTP request: {:?}", e);
+                return; // handle the error
+            }
+        };
+
+        let response = match request.send(&mut rx_buffer).await {
+            Ok(resp) => resp,
+            Err(_e) => {
+                error!("Failed to send HTTP request");
+                return; // handle the error;
+            }
+        };
+
+        let body = match from_utf8(response.body().read_to_end().await.unwrap()) {
+            Ok(b) => b,
+            Err(_e) => {
+                error!("Failed to read response body");
+                return; // handle the error
+            }
+        };
+        info!("Response body: {:?}", &body);
+
+        Timer::after(Duration::from_secs(60)).await;
     }
 }
 
@@ -180,5 +325,5 @@ fn draw_text(display: &mut impl DrawTarget<Color = Color>, text: &str, x: i32, y
     let text_style = TextStyleBuilder::new().baseline(Baseline::Top).build();
 
     let _ = Text::with_text_style(text, Point::new(x, y), style, text_style).draw(display);
-    info!("Draw text: {:?}", text);
+    debug!("Draw text: {:?}", text);
 }

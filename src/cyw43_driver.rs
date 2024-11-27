@@ -15,6 +15,11 @@ bind_interrupts!(struct Irqs {
 });
 
 #[embassy_executor::task]
+pub async fn net_task(mut runner: embassy_net::Runner<'static, cyw43::NetDriver<'static>>) -> ! {
+    runner.run().await
+}
+
+#[embassy_executor::task]
 async fn cyw43_task(
     runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO0, 0, DMA_CH0>>,
 ) -> ! {
@@ -30,17 +35,18 @@ pub async fn setup_cyw43<'a>(
     dma_ch0: DMA_CH0,
     spawner: Spawner,
 ) -> (Device<'a>, Control<'a>) {
-    let fw = include_bytes!("../cyw43-firmware/43439A0.bin");
-    let clm = include_bytes!("../cyw43-firmware/43439A0_clm.bin");
-    let btfw = include_bytes!("../cyw43-firmware/43439A0_btfw.bin");
+    // let fw = include_bytes!("../cyw43-firmware/43439A0.bin");
+    // let clm = include_bytes!("../cyw43-firmware/43439A0_clm.bin");
 
     // To make flashing faster for development, you may want to flash the firmwares independently
     // at hardcoded addresses, instead of baking them into the program with `include_bytes!`:
-    //     probe-rs download 43439A0.bin --format bin --chip RP2040 --base-address 0x10100000
-    //     probe-rs download 43439A0_clm.bin --format bin --chip RP2040 --base-address 0x10140000
+    //     probe-rs download 43439A0.bin --binary-format bin --chip RP2040 --base-address 0x101b0000
+    //     probe-rs download 43439A0_clm.bin --binary-format bin --chip RP2040 --base-address 0x101f8000
     //     probe-rs download 43439A0_btfw.bin --format bin --chip RP2040 --base-address 0x10141400
-    //let fw = unsafe { core::slice::from_raw_parts(0x10100000 as *const u8, 224190) };
-    //let clm = unsafe { core::slice::from_raw_parts(0x10140000 as *const u8, 4752) };
+    const FW_SZ: usize = include_bytes!("../cyw43-firmware/43439A0.bin").len();
+    const CLM_SZ: usize = include_bytes!("../cyw43-firmware/43439A0_clm.bin").len();
+    let fw = unsafe { core::slice::from_raw_parts(0x101b0000 as *const u8, FW_SZ) };
+    let clm = unsafe { core::slice::from_raw_parts(0x101f8000 as *const u8, CLM_SZ) };
     //let btfw = unsafe { core::slice::from_raw_parts(0x10141400 as *const u8, 6164) };
 
     let pwr = Output::new(p_23, Level::Low);
@@ -50,8 +56,7 @@ pub async fn setup_cyw43<'a>(
 
     static STATE: StaticCell<cyw43::State> = StaticCell::new();
     let state = STATE.init(cyw43::State::new());
-    let (net_device, _bt_device, mut control, runner) =
-        cyw43::new_with_bluetooth(state, pwr, spi, fw, btfw).await;
+    let (net_device, mut control, runner) = cyw43::new(state, pwr, spi, fw).await;
     unwrap!(spawner.spawn(cyw43_task(runner)));
 
     control.init(clm).await;
