@@ -263,6 +263,7 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
     // 95 * 	Thunderstorm: Slight or moderate
     // 96, 99 * 	Thunderstorm with slight and heavy hail
     loop {
+        //TODO maybe the buffer needs to be bigger for the response?
         let mut rx_buffer = [0; 8192];
         let mut tls_read_buffer = [0; 16640];
         let mut tls_write_buffer = [0; 16640];
