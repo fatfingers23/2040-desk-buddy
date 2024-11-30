@@ -65,8 +65,8 @@ fixed-macro = "1.2"
 
 # for web request example
 reqwless = { version = "0.13.0", features = ["defmt"] }
-serde = { version = "1.0.203", default-features = false, features = ["derive"] }
-serde-json-core = "0.5.1"
+serde = { version = "1.0.215", default-features = false, features = ["derive"] }
+serde-json-core = "0.6.0"
 
 assign-resources = { git = "https://github.com/adamgreig/assign-resources", rev = "94ad10e2729afdf0fd5a77cd12e68409a982f58a" }
 
@@ -111,6 +111,6 @@ lto = true
 opt-level = "z"
 
 [patch.crates-io]
-epd-waveshare = { path = "../epd-waveshare" }
+epd-waveshare = { git = "https://github.com/fatfingers23/epd-waveshare.git" }
 trouble-host = { git = "https://github.com/embassy-rs/trouble.git", rev = "4b8c0f499b34e46ca23a56e2d1640ede371722cf" }
 embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "8803128707b8bd9fc9dcea392a62dfd42aa822d2" }

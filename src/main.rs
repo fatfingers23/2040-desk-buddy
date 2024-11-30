@@ -1,9 +1,9 @@
 #![no_std]
 #![no_main]
 
-use core::str::from_utf8;
-
 use assign_resources::assign_resources;
+use core::error;
+use core::str::from_utf8;
 use cyw43::JoinOptions;
 use cyw43_driver::{net_task, setup_cyw43};
 use defmt::*;
@@ -34,18 +34,18 @@ use embedded_graphics::{
     text::{Baseline, Text, TextStyleBuilder},
 };
 use embedded_hal_bus::spi::ExclusiveDevice;
-use embedded_sdmmc::TimeSource;
 use env::env_value;
 use epd_waveshare::{
     color::*,
     epd4in2_v2::{Display4in2, Epd4in2},
     prelude::*,
 };
-use io::easy_format;
+
+use heapless::{String, Vec};
 use rand::RngCore;
 use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
 use reqwless::request::Method;
-use serde::de;
+use serde::Deserialize;
 use static_cell::StaticCell;
 use tinybmp::Bmp;
 use {defmt_rtt as _, panic_probe as _};
@@ -117,11 +117,18 @@ async fn main(spawner: Spawner) {
 
     spawner.must_spawn(orchestrate(spawner));
     spawner.must_spawn(wireless_task(spawner, r.cyw43_peripherals));
-    spawner.must_spawn(display_task(r.display_peripherals));
+    //TODO display commented out while disconnected for wifi development
+    // spawner.must_spawn(display_task(r.display_peripherals));
 }
 
 #[embassy_executor::task]
 async fn orchestrate(_spawner: Spawner) {
+    let mut test = 1;
+    info!("{:?}", test);
+
+    test = 2;
+    info!("{:?}", test);
+
     let mut state = State::new();
 
     // we need to have a receiver for the events
@@ -262,51 +269,63 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
     // 85, 86 	Snow showers slight and heavy
     // 95 * 	Thunderstorm: Slight or moderate
     // 96, 99 * 	Thunderstorm with slight and heavy hail
+    // loop {
+    //TODO maybe the buffer needs to be bigger for the response?
+    let mut rx_buffer = [0; 16640];
+    let mut tls_read_buffer = [0; 16640];
+    let mut tls_write_buffer = [0; 16640];
+
+    let client_state = TcpClientState::<1, 1024, 1024>::new();
+    let tcp_client = TcpClient::new(stack, &client_state);
+    let dns_client = DnsSocket::new(stack);
+    let tls_config = TlsConfig::new(
+        seed,
+        &mut tls_read_buffer,
+        &mut tls_write_buffer,
+        TlsVerify::None,
+    );
+
+    info!("Making HTTP request");
+    let mut http_client = HttpClient::new_with_tls(&tcp_client, &dns_client, tls_config);
+    //TODO find a way to do an acutal writer for this
+    // let url = easy_format::<32>(format_args!("https://api.open-meteo.com/v1/forecast?latitude={:?}&longitude={:?}&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit={:?}&timezone={:?}", lat, long, unit, timezone));
+    let url = "https://api.open-meteo.com/v1/forecast?latitude=35.7512&longitude=-86.93&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit=fahrenheit&timezone=America/Chicago";
+    let mut request = match http_client.request(Method::GET, &url).await {
+        Ok(req) => req,
+        Err(e) => {
+            error!("Failed to make HTTP request: {:?}", e);
+            return; // handle the error
+        }
+    };
+
+    let response = match request.send(&mut rx_buffer).await {
+        Ok(resp) => resp,
+        Err(_e) => {
+            error!("Failed to send HTTP request");
+            return; // handle the error;
+        }
+    };
+
+    info!("Response status: {:?}", response.status);
+    // let idk = response.body().reader();
+    // idk.
+    let body = match from_utf8(response.body().read_to_end().await.unwrap()) {
+        Ok(b) => b,
+        Err(_e) => {
+            error!("Failed to read response body");
+            return; // handle the error
+        }
+    };
+    match serde_json_core::de::from_slice::<WeatherResponse>(body.as_bytes()) {
+        Ok((output, _used)) => {
+            info!("Weather response: {:?}", output.daily.time[0]);
+        }
+        Err(_) => {
+            error!("There was an error deserlizing the weather reuqest")
+        }
+    }
+
     loop {
-        //TODO maybe the buffer needs to be bigger for the response?
-        let mut rx_buffer = [0; 8192];
-        let mut tls_read_buffer = [0; 16640];
-        let mut tls_write_buffer = [0; 16640];
-
-        let client_state = TcpClientState::<1, 1024, 1024>::new();
-        let tcp_client = TcpClient::new(stack, &client_state);
-        let dns_client = DnsSocket::new(stack);
-        let tls_config = TlsConfig::new(
-            seed,
-            &mut tls_read_buffer,
-            &mut tls_write_buffer,
-            TlsVerify::None,
-        );
-
-        let mut http_client = HttpClient::new_with_tls(&tcp_client, &dns_client, tls_config);
-        //TODO find a way to do an acutal writer for this
-        // let url = easy_format::<32>(format_args!("https://api.open-meteo.com/v1/forecast?latitude={:?}&longitude={:?}&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit={:?}&timezone={:?}", lat, long, unit, timezone));
-        let url = "https://api.open-meteo.com/v1/forecast?latitude=35.7512&longitude=-86.93&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit=fahrenheit&timezone=America/Chicago";
-        let mut request = match http_client.request(Method::GET, &url).await {
-            Ok(req) => req,
-            Err(e) => {
-                error!("Failed to make HTTP request: {:?}", e);
-                return; // handle the error
-            }
-        };
-
-        let response = match request.send(&mut rx_buffer).await {
-            Ok(resp) => resp,
-            Err(_e) => {
-                error!("Failed to send HTTP request");
-                return; // handle the error;
-            }
-        };
-
-        let body = match from_utf8(response.body().read_to_end().await.unwrap()) {
-            Ok(b) => b,
-            Err(_e) => {
-                error!("Failed to read response body");
-                return; // handle the error
-            }
-        };
-        info!("Response body: {:?}", &body);
-
         Timer::after(Duration::from_secs(60)).await;
     }
 }
@@ -327,4 +346,90 @@ fn draw_text(display: &mut impl DrawTarget<Color = Color>, text: &str, x: i32, y
 
     let _ = Text::with_text_style(text, Point::new(x, y), style, text_style).draw(display);
     debug!("Draw text: {:?}", text);
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WeatherResponse<'a> {
+    pub latitude: f64,
+    pub longitude: f64,
+    #[serde(rename = "generationtime_ms")]
+    pub generationtime_ms: f64,
+    #[serde(rename = "utc_offset_seconds")]
+    pub utc_offset_seconds: i64,
+    pub timezone: &'a str,
+    #[serde(rename = "timezone_abbreviation")]
+    pub timezone_abbreviation: &'a str,
+    pub elevation: f64,
+    #[serde(rename = "current_units")]
+    pub current_units: CurrentUnits<'a>,
+    pub current: Current<'a>,
+    #[serde(rename = "daily_units")]
+    pub daily_units: DailyUnits<'a>,
+    pub daily: Daily,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CurrentUnits<'a> {
+    pub time: &'a str,
+    pub interval: &'a str,
+    #[serde(rename = "temperature_2m")]
+    pub temperature_2m: &'a str,
+    #[serde(rename = "relative_humidity_2m")]
+    pub relative_humidity_2m: &'a str,
+    #[serde(rename = "weather_code")]
+    pub weather_code: &'a str,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Current<'a> {
+    pub time: &'a str,
+    pub interval: i64,
+    #[serde(rename = "temperature_2m")]
+    pub temperature_2m: f64,
+    #[serde(rename = "relative_humidity_2m")]
+    pub relative_humidity_2m: i64,
+    #[serde(rename = "weather_code")]
+    pub weather_code: i64,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyUnits<'a> {
+    pub time: &'a str,
+    #[serde(rename = "weather_code")]
+    pub weather_code: &'a str,
+    #[serde(rename = "temperature_2m_max")]
+    pub temperature_2m_max: &'a str,
+    #[serde(rename = "temperature_2m_min")]
+    pub temperature_2m_min: &'a str,
+    pub sunrise: &'a str,
+    pub sunset: &'a str,
+    #[serde(rename = "precipitation_probability_max")]
+    pub precipitation_probability_max: &'a str,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+//Hack
+//I know the vecs will always be 7(for my use case) since i get 7 week forecast
+//I know the Strings length will always be 10 or 16 because it's dates
+//Reason for the second was I was having lifetime issues with 'a &str in heapless::vec
+pub struct Daily {
+    // "2024-11-29",
+    pub time: Vec<String<10>, 7>,
+    #[serde(rename = "weather_code")]
+    pub weather_code: Vec<i64, 7>,
+    #[serde(rename = "temperature_2m_max")]
+    pub temperature_2m_max: Vec<f64, 7>,
+    #[serde(rename = "temperature_2m_min")]
+    pub temperature_2m_min: Vec<f64, 7>,
+    // 2024-11-29T06:37
+    pub sunrise: Vec<String<16>, 7>,
+    // 2024-11-29T06:37
+    pub sunset: Vec<String<16>, 7>,
+    #[serde(rename = "precipitation_probability_max")]
+    pub precipitation_probability_max: Vec<i64, 7>,
 }
