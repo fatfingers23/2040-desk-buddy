@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+#![feature(impl_trait_in_assoc_type)]
 
 use assign_resources::assign_resources;
 use core::str::from_utf8;
@@ -238,6 +239,11 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
     info!("waiting for stack to be up...");
     stack.wait_config_up().await;
     info!("Stack is up!");
+    //Blink led so I know it's connected
+    control.gpio_set(0, false).await;
+    Timer::after_millis(500).await;
+    control.gpio_set(0, true).await;
+
     // And now we can use it!
     let forecast_seed = rng.next_u64();
     spawner.must_spawn(forecast_task(forecast_seed, stack));
@@ -256,7 +262,7 @@ async fn forecast_task(seed: u64, stack: embassy_net::Stack<'static>) {
 
     let result = get_weather_updates(stack, seed, &mut rx_buffer).await;
     if let Ok(weather) = result {
-        info!("{:?}", weather.daily.time[0]);
+        info!("Task 1: {:?}", weather.daily.time[0]);
         // let weather = get_weather_updates(stack, seed
     }
 }
@@ -267,7 +273,7 @@ async fn office_status_task(seed: u64, stack: embassy_net::Stack<'static>) {
 
     let result = get_weather_updates(stack, seed, &mut rx_buffer).await;
     if let Ok(weather) = result {
-        info!("{:?}", weather.daily.time[0]);
+        info!("Task 2: {:?}", weather.daily.time[0]);
         // let weather = get_weather_updates(stack, seed
     }
 }
@@ -314,7 +320,7 @@ async fn get_weather_updates<'a>(
     let mut url_buffer = [0u8; 8_192]; // im sure this can be much smaller
 
     let formatted_url = easy_format_str(
-        format_args!("https://api.open-meteo.com/v1/forecast?latitude={:?}&longitude={:?}&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit={:?}&timezone={:?}",
+        format_args!("https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit={}&timezone={}",
          lat, long, unit, timezone), &mut url_buffer);
     let url = match formatted_url {
         Ok(url) => url,
@@ -323,7 +329,8 @@ async fn get_weather_updates<'a>(
             return Err(WebCallError::UrlFormatError);
         }
     };
-
+    info!("lat: {:?}", lat);
+    info!("URL: {:?}", url);
     let mut request = match http_client.request(Method::GET, &url).await {
         Ok(req) => req,
         Err(e) => {

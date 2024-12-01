@@ -19,6 +19,7 @@ embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "8
     "executor-interrupt",
     "defmt",
     "integrated-timers",
+    "nightly",
 ] }
 embassy-time = { version = "0.3.2", git = "https://github.com/embassy-rs/embassy.git", rev = "8803128707b8bd9fc9dcea392a62dfd42aa822d2", features = [
     "defmt",
