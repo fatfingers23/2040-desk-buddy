@@ -14,16 +14,9 @@ use embassy_rp::clocks::RoscRng;
 use embassy_rp::peripherals::{self};
 use embassy_rp::{
     gpio::{Input, Level, Output, Pull},
-    peripherals::SPI1,
     spi::{self, Spi},
 };
-use embassy_sync::{
-    blocking_mutex::{
-        raw::{CriticalSectionRawMutex, NoopRawMutex},
-        Mutex,
-    },
-    channel,
-};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel};
 use embassy_time::{Delay, Duration, Timer};
 use embedded_graphics::{
     image::Image,
@@ -39,6 +32,7 @@ use epd_waveshare::{
     epd4in2_v2::{Display4in2, Epd4in2},
     prelude::*,
 };
+use io::easy_format_str;
 use rand::RngCore;
 use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
 use reqwless::request::Method;
@@ -52,8 +46,7 @@ mod env;
 mod io;
 mod response_models;
 
-type Spi1Bus = Mutex<NoopRawMutex, Spi<'static, SPI1, spi::Blocking>>;
-
+#[allow(dead_code)]
 /// This is the type of Events that we will send from the worker tasks to the orchestrating task.
 enum Events {
     UsbPowered(bool),
@@ -66,6 +59,7 @@ enum Events {
 
 /// This is the type of Commands that we will send from the orchestrating task to the worker tasks.
 /// Note that we are lazy here and only have one command, you might want to have more.
+#[allow(dead_code)]
 enum Commands {
     /// This command will stop the appropriate worker task
     Stop,
@@ -127,17 +121,17 @@ async fn orchestrate(_spawner: Spawner) {
     test = 2;
     info!("{:?}", test);
 
-    let mut state = State::new();
+    let mut _state = State::new();
 
     // we need to have a receiver for the events
     let receiver = EVENT_CHANNEL.receiver();
 
     // and we need a sender for the consumer task
-    let state_sender = CONSUMER_CHANNEL.sender();
+    let _state_sender = CONSUMER_CHANNEL.sender();
 
     loop {
         //Wait for an event
-        let event = receiver.receive().await;
+        let _event = receiver.receive().await;
     }
 }
 
@@ -165,7 +159,7 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
     let mut display = Display4in2::default();
     display.clear(Color::White).ok();
     // epd4in2.clear_frame(&mut spi_dev, &mut Delay);
-    epd4in2.update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay);
+    let _ = epd4in2.update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay);
 
     draw_text(&mut display, "Hey", 5, 50);
     draw_bmp(
@@ -174,7 +168,7 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
         5,
         100,
     );
-    epd4in2.update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay);
+    let _ = epd4in2.update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay);
     epd4in2.sleep(&mut spi_dev, &mut Delay).unwrap();
 
     loop {
@@ -215,10 +209,6 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
     unwrap!(spawner.spawn(net_task(runner)));
     let wifi_network = env_value("WIFI_SSID");
     let wifi_password = env_value("WIFI_PASSWORD");
-    let lat = env_value("LAT");
-    let long = env_value("LON");
-    let unit = env_value("UNIT");
-    let timezone = env_value("TIMEZONE");
 
     loop {
         match control
@@ -253,7 +243,7 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
     let mut rx_buffer = [0; 8320];
 
     let result = get_weather_updates(stack, seed, &mut rx_buffer).await;
-    if let Some(weather) = result {
+    if let Ok(weather) = result {
         info!("{:?}", weather.daily.time[0]);
         // let weather = get_weather_updates(stack, seed
     }
@@ -263,11 +253,19 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
     }
 }
 
+pub enum WebCallError {
+    HttpError(u16),
+    WebRequestError,
+    FailedToReadResponse,
+    DeserializationError,
+    UrlFormatError,
+}
+
 async fn get_weather_updates<'a>(
     stack: embassy_net::Stack<'a>,
     seed: u64,
     rx_buffer: &'a mut [u8],
-) -> Option<WeatherResponse<'a>> {
+) -> Result<WeatherResponse<'a>, WebCallError> {
     //TODO i think this can be a lot less
 
     let mut tls_read_buffer = [0; 16640];
@@ -287,12 +285,31 @@ async fn get_weather_updates<'a>(
     let mut http_client = HttpClient::new_with_tls(&tcp_client, &dns_client, tls_config);
     //TODO find a way to do an acutal writer for this
     // let url = easy_format::<32>(format_args!("https://api.open-meteo.com/v1/forecast?latitude={:?}&longitude={:?}&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit={:?}&timezone={:?}", lat, long, unit, timezone));
-    let url = "https://api.open-meteo.com/v1/forecast?latitude=35.7512&longitude=-86.93&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit=fahrenheit&timezone=America/Chicago";
+    // let url = "https://api.open-meteo.com/v1/forecast?latitude=35.7512&longitude=-86.93&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit=fahrenheit&timezone=America/Chicago";
+
+    let lat = env_value("LAT");
+    let long = env_value("LON");
+    let unit = env_value("UNIT");
+    let timezone = env_value("TIMEZONE");
+
+    let mut url_buffer = [0u8; 8_192]; // im sure this can be much smaller
+
+    let formatted_url = easy_format_str(
+        format_args!("https://api.open-meteo.com/v1/forecast?latitude={:?}&longitude={:?}&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit={:?}&timezone={:?}",
+         lat, long, unit, timezone), &mut url_buffer);
+    let url = match formatted_url {
+        Ok(url) => url,
+        Err(_) => {
+            error!("Failed to format URL");
+            return Err(WebCallError::UrlFormatError);
+        }
+    };
+
     let mut request = match http_client.request(Method::GET, &url).await {
         Ok(req) => req,
         Err(e) => {
             error!("Failed to make HTTP request: {:?}", e);
-            return None;
+            return Err(WebCallError::WebRequestError);
         }
     };
 
@@ -300,28 +317,27 @@ async fn get_weather_updates<'a>(
         Ok(resp) => resp,
         Err(_e) => {
             error!("Failed to send HTTP request");
-            return None; // handle the error;
+            return Err(WebCallError::WebRequestError);
         }
     };
 
-    info!("Response status: {:?}", response.status);
-    // let idk = response.body().reader();
-    // idk.
+    if !response.status.is_successful() {
+        error!("HTTP request failed with status: {:?}", response.status);
+        return Err(WebCallError::HttpError(response.status.0));
+    }
+
     let body = match from_utf8(response.body().read_to_end().await.unwrap()) {
         Ok(b) => b,
         Err(_e) => {
             error!("Failed to read response body");
-            return None; // handle the error
+            return Err(WebCallError::FailedToReadResponse);
         }
     };
     match serde_json_core::de::from_slice::<WeatherResponse>(body.as_bytes()) {
-        Ok((output, _used)) => {
-            // info!("Weather response: {:?}", output.daily.time[0]);
-            Some(output)
-        }
+        Ok((output, _used)) => Ok(output),
         Err(_) => {
             error!("There was an error deserlizing the weather reuqest");
-            None
+            return Err(WebCallError::DeserializationError);
         }
     }
 }
