@@ -239,7 +239,19 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
     stack.wait_config_up().await;
     info!("Stack is up!");
     // And now we can use it!
+    let forecast_seed = rng.next_u64();
+    spawner.must_spawn(forecast_task(forecast_seed, stack));
 
+    let spotify_seed = rng.next_u64();
+    spawner.must_spawn(spotify_task(spotify_seed, stack));
+
+    loop {
+        Timer::after(Duration::from_secs(60)).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn forecast_task(seed: u64, stack: embassy_net::Stack<'static>) {
     let mut rx_buffer = [0; 8320];
 
     let result = get_weather_updates(stack, seed, &mut rx_buffer).await;
@@ -247,9 +259,16 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
         info!("{:?}", weather.daily.time[0]);
         // let weather = get_weather_updates(stack, seed
     }
+}
 
-    loop {
-        Timer::after(Duration::from_secs(60)).await;
+#[embassy_executor::task]
+async fn spotify_task(seed: u64, stack: embassy_net::Stack<'static>) {
+    let mut rx_buffer = [0; 8320];
+
+    let result = get_weather_updates(stack, seed, &mut rx_buffer).await;
+    if let Ok(weather) = result {
+        info!("{:?}", weather.daily.time[0]);
+        // let weather = get_weather_updates(stack, seed
     }
 }
 
@@ -262,7 +281,7 @@ pub enum WebCallError {
 }
 
 async fn get_weather_updates<'a>(
-    stack: embassy_net::Stack<'a>,
+    stack: embassy_net::Stack<'static>,
     seed: u64,
     rx_buffer: &'a mut [u8],
 ) -> Result<WeatherResponse<'a>, WebCallError> {
