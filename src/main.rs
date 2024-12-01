@@ -8,6 +8,7 @@ use cyw43::JoinOptions;
 use cyw43_driver::{net_task, setup_cyw43};
 use defmt::*;
 use embassy_executor::Spawner;
+use embassy_futures::select::{select, Either};
 use embassy_net::dns::DnsSocket;
 use embassy_net::tcp::client::{TcpClient, TcpClientState};
 use embassy_net::{Config, StackResources};
@@ -17,6 +18,7 @@ use embassy_rp::{
     gpio::{Input, Level, Output, Pull},
     spi::{self, Spi},
 };
+use embassy_sync::signal;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel};
 use embassy_time::{Delay, Duration, Timer};
 use embedded_graphics::{
@@ -50,12 +52,9 @@ mod response_models;
 #[allow(dead_code)]
 /// This is the type of Events that we will send from the worker tasks to the orchestrating task.
 enum Events {
-    UsbPowered(bool),
-    VsysVoltage(f32),
-    FirstRandomSeed(u32),
-    SecondRandomSeed(u32),
-    ThirdRandomSeed(u32),
-    ResetFirstRandomSeed,
+    //Can send data with these so make sure to check the example
+    UpdateWeather,
+    UpdateOfficeStatus,
 }
 
 /// This is the type of Commands that we will send from the orchestrating task to the worker tasks.
@@ -80,6 +79,10 @@ static EVENT_CHANNEL: channel::Channel<CriticalSectionRawMutex, Events, 10> =
 
 static CONSUMER_CHANNEL: channel::Channel<CriticalSectionRawMutex, State, 1> =
     channel::Channel::new();
+
+/// Signal for stopping the first random signal task. We use a signal here, because we need no queue. It is suffiient to have one signal active.
+static STOP_FIRST_RANDOM_SIGNAL: signal::Signal<CriticalSectionRawMutex, Commands> =
+    signal::Signal::new();
 
 assign_resources! {
     display_peripherals: DisplayPeripherals {
@@ -110,6 +113,8 @@ async fn main(spawner: Spawner) {
 
     spawner.must_spawn(orchestrate(spawner));
     spawner.must_spawn(wireless_task(spawner, r.cyw43_peripherals));
+    //Proof of concept caller
+    spawner.must_spawn(random_30s(spawner));
     //TODO display commented out while disconnected for wifi development
     // spawner.must_spawn(display_task(r.display_peripherals));
 }
@@ -244,37 +249,61 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
     Timer::after_millis(500).await;
     control.gpio_set(0, true).await;
 
-    // And now we can use it!
-    let forecast_seed = rng.next_u64();
-    spawner.must_spawn(forecast_task(forecast_seed, stack));
-
-    let office_status_seed = rng.next_u64();
-    spawner.must_spawn(office_status_task(office_status_seed, stack));
+    //TODO do this like orchestrate task where it listens for a method like "update weather", "update office status", etc
+    // we need to have a receiver for the events
+    let receiver = EVENT_CHANNEL.receiver();
 
     loop {
-        Timer::after(Duration::from_secs(60)).await;
+        //Wait for an event
+        let event = receiver.receive().await;
+        match event {
+            Events::UpdateWeather => {
+                let mut rx_buffer = [0; 8320];
+                let result = get_weather_updates(stack, seed, &mut rx_buffer).await;
+                if let Ok(weather) = result {
+                    info!("Task 1: {:?}", weather.daily.time[0]);
+                    // let weather = get_weather_updates(stack, seed
+                }
+            }
+            Events::UpdateOfficeStatus => {
+                let mut rx_buffer = [0; 8320];
+
+                let result = get_weather_updates(stack, seed, &mut rx_buffer).await;
+                if let Ok(weather) = result {
+                    info!("Task 2: {:?}", weather.daily.time[0]);
+                    // let weather = get_weather_updates(stack, seed
+                }
+            }
+        }
     }
 }
 
+///Proof of concept on something to call the tasks
 #[embassy_executor::task]
-async fn forecast_task(seed: u64, stack: embassy_net::Stack<'static>) {
-    let mut rx_buffer = [0; 8320];
+async fn random_30s(_spawner: Spawner) {
+    let sender = EVENT_CHANNEL.sender();
+    loop {
+        // we either await on the timer or the signal, whichever comes first.
+        let futures = select(
+            Timer::after(Duration::from_secs(30)),
+            STOP_FIRST_RANDOM_SIGNAL.wait(),
+        )
+        .await;
+        match futures {
+            Either::First(_) => {
+                // we received are operating on the timer
+                info!("30s are up, generating random number");
 
-    let result = get_weather_updates(stack, seed, &mut rx_buffer).await;
-    if let Ok(weather) = result {
-        info!("Task 1: {:?}", weather.daily.time[0]);
-        // let weather = get_weather_updates(stack, seed
-    }
-}
-
-#[embassy_executor::task]
-async fn office_status_task(seed: u64, stack: embassy_net::Stack<'static>) {
-    let mut rx_buffer = [0; 8320];
-
-    let result = get_weather_updates(stack, seed, &mut rx_buffer).await;
-    if let Ok(weather) = result {
-        info!("Task 2: {:?}", weather.daily.time[0]);
-        // let weather = get_weather_updates(stack, seed
+                sender.send(Events::UpdateWeather).await;
+                Timer::after(Duration::from_secs(4)).await;
+                sender.send(Events::UpdateOfficeStatus).await;
+            }
+            Either::Second(_) => {
+                // we received the signal to stop
+                info!("Received signal to stop, goodbye!");
+                break;
+            }
+        }
     }
 }
 
