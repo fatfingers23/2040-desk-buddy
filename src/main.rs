@@ -242,8 +242,8 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
     let forecast_seed = rng.next_u64();
     spawner.must_spawn(forecast_task(forecast_seed, stack));
 
-    let spotify_seed = rng.next_u64();
-    spawner.must_spawn(spotify_task(spotify_seed, stack));
+    let office_status_seed = rng.next_u64();
+    spawner.must_spawn(office_status_task(office_status_seed, stack));
 
     loop {
         Timer::after(Duration::from_secs(60)).await;
@@ -262,7 +262,7 @@ async fn forecast_task(seed: u64, stack: embassy_net::Stack<'static>) {
 }
 
 #[embassy_executor::task]
-async fn spotify_task(seed: u64, stack: embassy_net::Stack<'static>) {
+async fn office_status_task(seed: u64, stack: embassy_net::Stack<'static>) {
     let mut rx_buffer = [0; 8320];
 
     let result = get_weather_updates(stack, seed, &mut rx_buffer).await;
