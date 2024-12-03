@@ -254,10 +254,27 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
     loop {
         //Wait for an event
         let event = receiver.receive().await;
+
+        //Build the http client
+        let mut tls_read_buffer = [0; 16640];
+        let mut tls_write_buffer = [0; 16640];
+
+        let client_state = TcpClientState::<2, 1024, 1024>::new();
+        let tcp_client = TcpClient::new(stack, &client_state);
+        let dns_client = DnsSocket::new(stack);
+        let tls_config = TlsConfig::new(
+            seed,
+            &mut tls_read_buffer,
+            &mut tls_write_buffer,
+            TlsVerify::None,
+        );
+
+        let http_client = HttpClient::new_with_tls(&tcp_client, &dns_client, tls_config);
+
         match event {
             Events::UpdateWeather => {
                 let mut rx_buffer = [0; 8320];
-                let result = get_weather_updates(stack, seed, &mut rx_buffer).await;
+                let result = get_weather_updates(http_client, &mut rx_buffer).await;
                 if let Ok(weather) = result {
                     info!("Task 1: {:?}", weather.daily.time[0]);
                     // let weather = get_weather_updates(stack, seed
@@ -266,7 +283,7 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
             Events::UpdateOfficeStatus => {
                 let mut rx_buffer = [0; 8320];
 
-                let result = get_weather_updates(stack, seed, &mut rx_buffer).await;
+                let result = get_weather_updates(http_client, &mut rx_buffer).await;
                 if let Ok(weather) = result {
                     info!("Task 2: {:?}", weather.daily.time[0]);
                     // let weather = get_weather_updates(stack, seed
@@ -314,28 +331,9 @@ pub enum WebCallError {
 }
 
 async fn get_weather_updates<'a>(
-    stack: embassy_net::Stack<'static>,
-    seed: u64,
+    mut http_client: HttpClient<'a, TcpClient<'a, 2>, DnsSocket<'a>>,
     rx_buffer: &'a mut [u8],
 ) -> Result<WeatherResponse<'a>, WebCallError> {
-    //TODO i think this can be a lot less
-
-    let mut tls_read_buffer = [0; 16640];
-    let mut tls_write_buffer = [0; 16640];
-
-    let client_state = TcpClientState::<1, 1024, 1024>::new();
-    let tcp_client = TcpClient::new(stack, &client_state);
-    let dns_client = DnsSocket::new(stack);
-    let tls_config = TlsConfig::new(
-        seed,
-        &mut tls_read_buffer,
-        &mut tls_write_buffer,
-        TlsVerify::None,
-    );
-
-    info!("Making HTTP request");
-    let mut http_client = HttpClient::new_with_tls(&tcp_client, &dns_client, tls_config);
-
     let lat = env_value("LAT");
     let long = env_value("LON");
     let unit = env_value("UNIT");
