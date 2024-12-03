@@ -51,7 +51,7 @@ embassy-futures = { version = "0.1.0", git = "https://github.com/embassy-rs/emba
 embassy-usb-logger = { version = "0.2.0", git = "https://github.com/embassy-rs/embassy.git" }
 cyw43 = { version = "0.2.0", git = "https://github.com/embassy-rs/embassy.git", rev = "8803128707b8bd9fc9dcea392a62dfd42aa822d2", features = [
     "defmt",
-    "firmware-logs",
+    # "firmware-logs",
     "bluetooth",
 ] }
 cyw43-pio = { version = "0.2.0", git = "https://github.com/embassy-rs/embassy.git", rev = "8803128707b8bd9fc9dcea392a62dfd42aa822d2", features = [

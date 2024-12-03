@@ -184,7 +184,7 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
 
 #[embassy_executor::task]
 async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
-    let mut rng = RoscRng;
+    let mut rng: RoscRng = RoscRng;
     let (net_device, mut control) = setup_cyw43(
         cyw43_peripherals.pio,
         cyw43_peripherals.cs,
@@ -244,9 +244,7 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
     info!("waiting for stack to be up...");
     stack.wait_config_up().await;
     info!("Stack is up!");
-    //Blink led so I know it's connected
-    control.gpio_set(0, false).await;
-    Timer::after_millis(500).await;
+    //Turns LED on so I know it's connected and ready
     control.gpio_set(0, true).await;
 
     //TODO do this like orchestrate task where it listens for a method like "update weather", "update office status", etc
@@ -337,9 +335,6 @@ async fn get_weather_updates<'a>(
 
     info!("Making HTTP request");
     let mut http_client = HttpClient::new_with_tls(&tcp_client, &dns_client, tls_config);
-    //TODO find a way to do an acutal writer for this
-    // let url = easy_format::<32>(format_args!("https://api.open-meteo.com/v1/forecast?latitude={:?}&longitude={:?}&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit={:?}&timezone={:?}", lat, long, unit, timezone));
-    // let url = "https://api.open-meteo.com/v1/forecast?latitude=35.7512&longitude=-86.93&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit=fahrenheit&timezone=America/Chicago";
 
     let lat = env_value("LAT");
     let long = env_value("LON");
@@ -358,8 +353,7 @@ async fn get_weather_updates<'a>(
             return Err(WebCallError::UrlFormatError);
         }
     };
-    info!("lat: {:?}", lat);
-    info!("URL: {:?}", url);
+
     let mut request = match http_client.request(Method::GET, &url).await {
         Ok(req) => req,
         Err(e) => {
