@@ -3,7 +3,9 @@
 #![feature(impl_trait_in_assoc_type)]
 
 use assign_resources::assign_resources;
+use core::borrow::Borrow;
 use core::str::from_utf8;
+use cortex_m::interrupt::Mutex;
 use cyw43::JoinOptions;
 use cyw43_driver::{net_task, setup_cyw43};
 use defmt::*;
@@ -35,6 +37,7 @@ use epd_waveshare::{
     epd4in2_v2::{Display4in2, Epd4in2},
     prelude::*,
 };
+use heapless::String;
 use io::easy_format_str;
 use rand::RngCore;
 use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
@@ -50,11 +53,14 @@ mod io;
 mod response_models;
 
 #[allow(dead_code)]
-/// This is the type of Events that we will send from the worker tasks to the orchestrating task.
-enum Events {
-    //Can send data with these so make sure to check the example
+/// These are events that trigger web requests.
+enum WebRequestEvents {
     UpdateWeather,
     UpdateOfficeStatus,
+}
+
+enum GeneralEvents<'a> {
+    WeatherUpdated(Test<'a>),
 }
 
 /// This is the type of Commands that we will send from the orchestrating task to the worker tasks.
@@ -66,15 +72,20 @@ enum Commands {
 }
 
 #[derive(Default, Debug, Clone, Format)]
-struct State {}
+struct State {
+    weather: Option<f64>, // weather: Option<WeatherResponse<'static>>,
+}
 
 impl State {
     fn new() -> Self {
-        Self {}
+        Self { weather: None }
     }
 }
 
-static EVENT_CHANNEL: channel::Channel<CriticalSectionRawMutex, Events, 10> =
+static WEB_REQUEST_EVENT_CHANNEL: channel::Channel<CriticalSectionRawMutex, WebRequestEvents, 10> =
+    channel::Channel::new();
+
+static GENERAL_EVENT_CHANNEL: channel::Channel<CriticalSectionRawMutex, GeneralEvents, 10> =
     channel::Channel::new();
 
 static CONSUMER_CHANNEL: channel::Channel<CriticalSectionRawMutex, State, 1> =
@@ -130,14 +141,18 @@ async fn orchestrate(_spawner: Spawner) {
     let mut _state = State::new();
 
     // we need to have a receiver for the events
-    let receiver = EVENT_CHANNEL.receiver();
+    let receiver = GENERAL_EVENT_CHANNEL.receiver();
 
     // and we need a sender for the consumer task
     let _state_sender = CONSUMER_CHANNEL.sender();
 
     loop {
         //Wait for an event
-        let _event = receiver.receive().await;
+        let event = receiver.receive().await;
+        // match event {
+        //     WebRequestEvents::UpdateWeather => {}
+        //     WebRequestEvents::UpdateOfficeStatus => {}
+        // }
     }
 }
 
@@ -249,8 +264,10 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
 
     //TODO do this like orchestrate task where it listens for a method like "update weather", "update office status", etc
     // we need to have a receiver for the events
-    let receiver = EVENT_CHANNEL.receiver();
+    let receiver = WEB_REQUEST_EVENT_CHANNEL.receiver();
+    let sender = GENERAL_EVENT_CHANNEL.sender();
 
+    let mut rx_buffer_office_status = [0; 8320];
     loop {
         //Wait for an event
         let event = receiver.receive().await;
@@ -269,21 +286,30 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
             TlsVerify::None,
         );
 
-        let http_client = HttpClient::new_with_tls(&tcp_client, &dns_client, tls_config);
+        let mut http_client = HttpClient::new_with_tls(&tcp_client, &dns_client, tls_config);
 
         match event {
-            Events::UpdateWeather => {
+            WebRequestEvents::UpdateWeather => {
                 let mut rx_buffer = [0; 8320];
-                let result = get_weather_updates(http_client, &mut rx_buffer).await;
+                let result = get_weather_updates(&mut http_client, &mut rx_buffer).await;
                 if let Ok(weather) = result {
-                    info!("Task 1: {:?}", weather.daily.time[0]);
+                    let mut time_text: String<10> = String::<10>::new();
+                    // time_text.push_str(weather.daily_units.sunrise).unwrap();
+                    // sender
+                    //     .send(GeneralEvents::WeatherUpdated(Test {
+                    //         idk: weather.daily_units.sunrise.clone(),
+                    //     }))
+                    //     .await;
+                    // sender.send(GeneralEvents::WeatherUpdated(weather)).await;
+                    // info!("Task 1: {:?}", weather.daily.time[0]);
                     // let weather = get_weather_updates(stack, seed
                 }
             }
-            Events::UpdateOfficeStatus => {
+            WebRequestEvents::UpdateOfficeStatus => {
                 let mut rx_buffer = [0; 8320];
 
-                let result = get_weather_updates(http_client, &mut rx_buffer).await;
+                let result =
+                    get_weather_updates(&mut http_client, &mut rx_buffer_office_status).await;
                 if let Ok(weather) = result {
                     info!("Task 2: {:?}", weather.daily.time[0]);
                     // let weather = get_weather_updates(stack, seed
@@ -296,7 +322,7 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
 ///Proof of concept on something to call the tasks
 #[embassy_executor::task]
 async fn random_30s(_spawner: Spawner) {
-    let sender = EVENT_CHANNEL.sender();
+    let sender = WEB_REQUEST_EVENT_CHANNEL.sender();
     loop {
         // we either await on the timer or the signal, whichever comes first.
         let futures = select(
@@ -309,9 +335,9 @@ async fn random_30s(_spawner: Spawner) {
                 // we received are operating on the timer
                 info!("30s are up, generating random number");
 
-                sender.send(Events::UpdateWeather).await;
+                sender.send(WebRequestEvents::UpdateWeather).await;
                 Timer::after(Duration::from_secs(4)).await;
-                sender.send(Events::UpdateOfficeStatus).await;
+                sender.send(WebRequestEvents::UpdateOfficeStatus).await;
             }
             Either::Second(_) => {
                 // we received the signal to stop
@@ -331,7 +357,7 @@ pub enum WebCallError {
 }
 
 async fn get_weather_updates<'a>(
-    mut http_client: HttpClient<'a, TcpClient<'a, 2>, DnsSocket<'a>>,
+    http_client: &mut HttpClient<'a, TcpClient<'a, 2>, DnsSocket<'a>>,
     rx_buffer: &'a mut [u8],
 ) -> Result<WeatherResponse<'a>, WebCallError> {
     let lat = env_value("LAT");
