@@ -21,6 +21,7 @@ use embassy_rp::{
 use embassy_sync::signal;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel};
 use embassy_time::{Delay, Duration, Timer};
+use embedded_graphics::primitives::{PrimitiveStyleBuilder, Rectangle};
 use embedded_graphics::{
     image::Image,
     mono_font::MonoTextStyleBuilder,
@@ -68,14 +69,25 @@ enum Commands {
     Stop,
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
+enum StateChanges {
+    None,
+    ForecastUpdated,
+    OfficeStatusUpdated,
+}
+
+#[derive(Debug, Clone)]
 struct State {
     forecast: Option<ForecastResponse>,
+    state_change: StateChanges,
 }
 
 impl State {
     fn new() -> Self {
-        Self { forecast: None }
+        Self {
+            forecast: None,
+            state_change: StateChanges::None,
+        }
     }
 }
 
@@ -101,7 +113,6 @@ assign_resources! {
         dc: PIN_8,
         rst: PIN_12,
         busy: PIN_13,
-
     },
     cyw43_peripherals: Cyw43Peripherals {
         pio: PIO0,
@@ -123,7 +134,7 @@ async fn main(spawner: Spawner) {
     //Proof of concept caller
     spawner.must_spawn(random_10s(spawner));
     //TODO display commented out while disconnected for wifi development
-    // spawner.must_spawn(display_task(r.display_peripherals));
+    spawner.must_spawn(display_task(r.display_peripherals));
 }
 
 #[embassy_executor::task]
@@ -134,7 +145,7 @@ async fn orchestrate(_spawner: Spawner) {
     let receiver = GENERAL_EVENT_CHANNEL.receiver();
 
     // and we need a sender for the consumer task
-    let _state_sender = CONSUMER_CHANNEL.sender();
+    let state_sender = CONSUMER_CHANNEL.sender();
 
     loop {
         //Wait for an event
@@ -142,15 +153,19 @@ async fn orchestrate(_spawner: Spawner) {
         match event {
             GeneralEvents::ForecastUpdated(forecast_response) => {
                 state.forecast = Some(forecast_response);
-                let forecast = state.forecast.unwrap();
-                let current = forecast.current;
-                let current_display = forecast.current_units;
-                info!(
-                    "Current Temp: {:?} {}",
-                    current.temperature_2m, current_display.temperature_2m
-                );
+                //POC code. Can be removed
+                if let Some(forecast) = &state.forecast {
+                    let current = &forecast.current;
+                    let current_display = &forecast.current_units;
+                    info!(
+                        "Current Temp: {:?} {}",
+                        current.temperature_2m, current_display.temperature_2m
+                    );
+                }
+                state.state_change = StateChanges::ForecastUpdated;
             }
         }
+        state_sender.send(state.clone()).await;
     }
 }
 
@@ -180,18 +195,89 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
     // epd4in2.clear_frame(&mut spi_dev, &mut Delay);
     let _ = epd4in2.update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay);
 
-    draw_text(&mut display, "Hey", 5, 50);
-    draw_bmp(
-        &mut display,
-        include_bytes!("../ferris_w_a_knife.bmp"),
-        5,
-        100,
-    );
-    let _ = epd4in2.update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay);
+    // draw_text(&mut display, "Hey", 5, 50);
+    // draw_bmp(
+    //     &mut display,
+    //     include_bytes!("../ferris_w_a_knife.bmp"),
+    //     5,
+    //     100,
+    // );
+    // let _ = epd4in2.update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay);
     epd4in2.sleep(&mut spi_dev, &mut Delay).unwrap();
 
+    let receiver = CONSUMER_CHANNEL.receiver();
+    // let sender = EVENT_CHANNEL.sender();
     loop {
-        Timer::after_millis(50).await;
+        //TODO how do we decide what has changed?
+        let state = receiver.receive().await;
+
+        match state.state_change {
+            StateChanges::None => {}
+            StateChanges::ForecastUpdated => {
+                if let Some(forecast) = state.forecast {
+                    for i in 0..7 {
+                        let daily_date = &forecast.daily.time[i];
+                        let daily_max_temp = &forecast.daily.temperature_2m_max[i];
+                        let daily_min_temp = &forecast.daily.temperature_2m_min[i];
+                        let daily_weather_code = &forecast.daily.weather_code[i];
+                        info!(
+                            "Date: {:?}, Max Temp: {:?}, Min Temp: {:?}, Weather Code: {:?}",
+                            daily_date, daily_max_temp, daily_min_temp, daily_weather_code
+                        );
+
+                        //Drawing the forecast box
+                        let forecast_box_style = PrimitiveStyleBuilder::new()
+                            .stroke_color(Color::Black)
+                            .stroke_width(1)
+                            .fill_color(Color::White)
+                            .build();
+
+                        //Top of rectangle showing date
+                        let _ = Rectangle::new(Point::new(5, 120), Size::new(75, 25))
+                            .into_styled(forecast_box_style)
+                            .draw(&mut display);
+
+                        //Outline of the daily forecast box
+                        let _ = Rectangle::new(Point::new(5, 145), Size::new(75, 150))
+                            .into_styled(forecast_box_style)
+                            .draw(&mut display);
+
+                        //Writing text
+                        let mut formatting_buffer = [0u8; 8_320];
+                        let _ = epd4in2.wake_up(&mut spi_dev, &mut Delay);
+
+                        let formatted_text = easy_format_str(
+                            format_args!(
+                                "{}{}",
+                                forecast.current.temperature_2m,
+                                forecast.current_units.temperature_2m
+                            ),
+                            &mut formatting_buffer,
+                        );
+                        draw_text(&mut display, formatted_text.unwrap(), 7, 155);
+
+                        formatting_buffer = [0u8; 8_320];
+                        // formatted_text = easy_format_str(
+                        //     format_args!(
+                        //         "Humidity: {}{}",
+                        //         forecast.current.relative_humidity_2m,
+                        //         forecast.current_units.relative_humidity_2m
+                        //     ),
+                        //     &mut formatting_buffer,
+                        // );
+                        // draw_text(&mut display, formatted_text.unwrap(), 5, 225);
+                    }
+                    let _ = epd4in2.update_and_display_frame(
+                        &mut spi_dev,
+                        display.buffer(),
+                        &mut Delay,
+                    );
+                    epd4in2.sleep(&mut spi_dev, &mut Delay).unwrap();
+                }
+            }
+            StateChanges::OfficeStatusUpdated => {}
+        }
+        Timer::after_millis(200).await;
     }
 }
 
@@ -304,6 +390,10 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
 #[embassy_executor::task]
 async fn random_10s(_spawner: Spawner) {
     let sender = WEB_REQUEST_EVENT_CHANNEL.sender();
+    Timer::after(Duration::from_secs(10)).await;
+    info!("10s are up, calling forecast update");
+    sender.send(WebRequestEvents::UpdateForecast).await;
+
     loop {
         // we either await on the timer or the signal, whichever comes first.
         let futures = select(
@@ -314,8 +404,8 @@ async fn random_10s(_spawner: Spawner) {
         match futures {
             Either::First(_) => {
                 // we received are operating on the timer
-                info!("10s are up, calling forecast update");
-                sender.send(WebRequestEvents::UpdateForecast).await;
+                // info!("10s are up, calling forecast update");
+                // sender.send(WebRequestEvents::UpdateForecast).await;
             }
             Either::Second(_) => {
                 // we received the signal to stop
@@ -343,7 +433,7 @@ async fn get_forecast_update<'a>(
     let unit = env_value("UNIT");
     let timezone = env_value("TIMEZONE");
 
-    let mut url_buffer = [0u8; 8_192]; // im sure this can be much smaller
+    let mut url_buffer = [0u8; 1_028]; // im sure this can be much smaller
 
     let formatted_url = easy_format_str(
         format_args!("https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit={}&timezone={}",
