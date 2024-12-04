@@ -224,94 +224,19 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
 
                     //Only have room for a 5 day forecast
                     for i in 0..5 {
-                        //Shared buffer for all formatting. Make sure to reset after each use
-                        let mut formatting_buffer = [0u8; 8_320];
-
                         let daily_date = &forecast.daily.time[i];
-
                         let daily_max_temp = &forecast.daily.temperature_2m_max[i];
-                        let daily_max_rounded = floor(*daily_max_temp);
                         let daily_min_temp = &forecast.daily.temperature_2m_min[i];
-                        let daily_min_rounded = floor(*daily_min_temp);
                         let daily_weather_code = &forecast.daily.weather_code[i];
-                        info!(
-                            "Date: {:?}, Max Temp: {:?}, Min Temp: {:?}, Weather Code: {:?}",
-                            daily_date, daily_max_temp, daily_min_temp, daily_weather_code
-                        );
-
-                        //forecast box style
-                        let forecast_box_style = PrimitiveStyleBuilder::new()
-                            .stroke_color(Color::Black)
-                            .stroke_width(1)
-                            .fill_color(Color::White)
-                            .build();
-
-                        //Top of rectangle showing date
-                        let _ = Rectangle::new(starting_point, Size::new(75, 25))
-                            .into_styled(forecast_box_style)
-                            .draw(&mut display);
-
-                        // Writing the forecast content
-
-                        //TODO find the day of the week. I think i'll need the RTC set for that
-                        let split: Vec<&str, 3> = daily_date.split("-").collect();
-                        let _year = split[0];
-                        let month = split[1];
-                        let day = split[2];
-                        let month_day = easy_format_str(
-                            format_args!("{}/{}", month, day),
-                            &mut formatting_buffer,
-                        );
-
-                        draw_text_font(
+                        draw_weather_forecast_box(
+                            starting_point,
+                            daily_date,
+                            *daily_max_temp,
+                            *daily_min_temp,
+                            *daily_weather_code,
                             &mut display,
-                            month_day.unwrap(),
-                            starting_point.x + 16,
-                            126,
-                            &embedded_graphics::mono_font::ascii::FONT_9X18_BOLD,
+                            forecast.clone(),
                         );
-
-                        //Outline of the daily forecast box
-                        let _ = Rectangle::new(
-                            Point::new(starting_point.x, starting_point.y + 25),
-                            Size::new(75, 150),
-                        )
-                        .into_styled(forecast_box_style)
-                        .draw(&mut display);
-
-                        //Draw weather icon
-                        draw_bmp(
-                            &mut display,
-                            weather_icons::get_weather_icon(*daily_weather_code).get_icon(),
-                            starting_point.x + 10,
-                            170,
-                        );
-
-                        //Writing text
-
-                        //TODO should read from the display formats but I need a font library with °
-                        let formatted_text = easy_format_str(
-                            format_args!("{}F/{}F", daily_max_rounded, daily_min_rounded),
-                            &mut formatting_buffer,
-                        );
-                        draw_text_font(
-                            &mut display,
-                            formatted_text.unwrap(),
-                            starting_point.x + 7,
-                            155,
-                            &embedded_graphics::mono_font::ascii::FONT_9X15_BOLD,
-                        );
-
-                        // formatting_buffer = [0u8; 8_320];
-                        // formatted_text = easy_format_str(
-                        //     format_args!(
-                        //         "Humidity: {}{}",
-                        //         forecast.current.relative_humidity_2m,
-                        //         forecast.current_units.relative_humidity_2m
-                        //     ),
-                        //     &mut formatting_buffer,
-                        // );
-                        // draw_text(&mut display, formatted_text.unwrap(), 5, 225);
                         starting_point.x += 75;
                     }
 
@@ -531,6 +456,98 @@ async fn get_forecast_update<'a>(
             return Err(WebCallError::DeserializationError);
         }
     }
+}
+
+fn draw_weather_forecast_box(
+    starting_point: Point,
+    daily_date: &str,
+    daily_max_temp: f64,
+    daily_min_temp: f64,
+    daily_weather_code: u8,
+    display: &mut impl DrawTarget<Color = Color>,
+    forecast: ForecastResponse,
+) {
+    //Shared buffer for all formatting. Make sure to reset after each use
+    let mut formatting_buffer = [0u8; 8_320];
+
+    let daily_max_rounded = floor(daily_max_temp);
+    let daily_min_rounded = floor(daily_min_temp);
+
+    info!(
+        "Date: {:?}, Max Temp: {:?}, Min Temp: {:?}, Weather Code: {:?}",
+        daily_date, daily_max_temp, daily_min_temp, daily_weather_code
+    );
+
+    //forecast box style
+    let forecast_box_style = PrimitiveStyleBuilder::new()
+        .stroke_color(Color::Black)
+        .stroke_width(1)
+        .fill_color(Color::White)
+        .build();
+
+    //Top of rectangle showing date
+    let _ = Rectangle::new(starting_point, Size::new(75, 25))
+        .into_styled(forecast_box_style)
+        .draw(display);
+
+    // Writing the forecast content
+
+    //TODO find the day of the week. I think i'll need the RTC set for that
+    let split: Vec<&str, 3> = daily_date.split("-").collect();
+    let _year = split[0];
+    let month = split[1];
+    let day = split[2];
+    let month_day = easy_format_str(format_args!("{}/{}", month, day), &mut formatting_buffer);
+
+    draw_text_font(
+        display,
+        month_day.unwrap(),
+        starting_point.x + 16,
+        126,
+        &embedded_graphics::mono_font::ascii::FONT_9X18_BOLD,
+    );
+
+    //Outline of the daily forecast box
+    let _ = Rectangle::new(
+        Point::new(starting_point.x, starting_point.y + 25),
+        Size::new(75, 150),
+    )
+    .into_styled(forecast_box_style)
+    .draw(display);
+
+    //Draw weather icon
+    draw_bmp(
+        display,
+        weather_icons::get_weather_icon(daily_weather_code).get_icon(),
+        starting_point.x + 10,
+        170,
+    );
+
+    //Writing text
+
+    //TODO should read from the display formats but I need a font library with °
+    let formatted_text = easy_format_str(
+        format_args!("{}F/{}F", daily_max_rounded, daily_min_rounded),
+        &mut formatting_buffer,
+    );
+    draw_text_font(
+        display,
+        formatted_text.unwrap(),
+        starting_point.x + 7,
+        155,
+        &embedded_graphics::mono_font::ascii::FONT_9X15_BOLD,
+    );
+
+    // formatting_buffer = [0u8; 8_320];
+    // formatted_text = easy_format_str(
+    //     format_args!(
+    //         "Humidity: {}{}",
+    //         forecast.current.relative_humidity_2m,
+    //         forecast.current_units.relative_humidity_2m
+    //     ),
+    //     &mut formatting_buffer,
+    // );
+    // draw_text(&mut display, formatted_text.unwrap(), 5, 225);
 }
 
 fn draw_bmp(display: &mut impl DrawTarget<Color = Color>, bmp_data: &[u8], x: i32, y: i32) {
