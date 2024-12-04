@@ -1,4 +1,5 @@
 use defmt::*;
+use embassy_rp::rtc::DateTime;
 use embedded_graphics::mono_font::MonoFont;
 use embedded_graphics::primitives::{PrimitiveStyleBuilder, Rectangle};
 use embedded_graphics::{
@@ -16,6 +17,34 @@ use tinybmp::Bmp;
 use crate::io::easy_format_str;
 use crate::response_models::{Current, CurrentUnits};
 use crate::weather_icons;
+
+///Draw time
+pub fn draw_time(date_time: DateTime, display: &mut impl DrawTarget<Color = Color>) {
+    let mut am = true;
+    let twelve_hour = if date_time.hour > 12 {
+        am = false;
+        date_time.hour - 12
+    } else if date_time.hour == 0 {
+        12
+    } else {
+        date_time.hour
+    };
+
+    let am_pm = if am { "AM" } else { "PM" };
+
+    let mut formatting_buffer = [0u8; 520];
+    let formatted_time = easy_format_str(
+        format_args!("{:02}:{:02} {}", twelve_hour, date_time.minute, am_pm),
+        &mut formatting_buffer,
+    );
+    let point = Point::new(5, 5);
+    let rectangle_erase_style = PrimitiveStyleBuilder::new()
+        .fill_color(Color::White)
+        .build();
+    let _ = Rectangle::new(point, Size::new(100, 20));
+
+    draw_text(display, formatted_time.unwrap(), 5, 10);
+}
 
 /// Forecast display
 

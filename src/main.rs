@@ -7,7 +7,7 @@ use core::str::from_utf8;
 use cyw43::JoinOptions;
 use cyw43_driver::{net_task, setup_cyw43};
 use defmt::*;
-use display::{draw_current_outside_weather, draw_weather_forecast_box};
+use display::{draw_current_outside_weather, draw_time, draw_weather_forecast_box};
 use embassy_executor::Spawner;
 use embassy_futures::select::{select, Either};
 use embassy_net::dns::DnsSocket;
@@ -58,6 +58,8 @@ enum WebRequestEvents {
 enum GeneralEvents {
     ForecastUpdated(ForecastResponse),
     TimeFromApi(DateTime),
+    //TODO also pass what was changed?
+    TimeDigitChanged(DateTime),
 }
 
 /// This is the type of Commands that we will send from the orchestrating task to the worker tasks.
@@ -75,12 +77,14 @@ enum StateChanges {
     ForecastUpdated,
     OfficeStatusUpdated,
     TimeSet,
+    NewTimeDigit,
 }
 
 #[derive(Debug, Clone)]
 struct State {
     forecast: Option<ForecastResponse>,
     date_time_from_api: Option<DateTime>,
+    approximately_current_time: Option<DateTime>,
     state_change: StateChanges,
 }
 
@@ -90,6 +94,7 @@ impl State {
             forecast: None,
             date_time_from_api: None,
             state_change: StateChanges::None,
+            approximately_current_time: None,
         }
     }
 }
@@ -176,6 +181,11 @@ async fn orchestrate(_spawner: Spawner) {
                 state.date_time_from_api = Some(time);
                 state.state_change = StateChanges::TimeSet;
             }
+            GeneralEvents::TimeDigitChanged(time) => {
+                info!("Time digit changed");
+                state.approximately_current_time = Some(time);
+                state.state_change = StateChanges::NewTimeDigit;
+            }
         }
         state_sender.send(state.clone()).await;
     }
@@ -187,7 +197,7 @@ async fn rtc_task(_spawner: Spawner, rtc_peripheral: ClockPeripherals) {
     let mut rtc = embassy_rp::rtc::Rtc::new(rtc_peripheral.rtc);
 
     let receiver = CONSUMER_CHANNEL.receiver();
-    // let sender = EVENT_CHANNEL.sender();
+    let sender = GENERAL_EVENT_CHANNEL.sender();
 
     loop {
         //Wait for an event
@@ -195,9 +205,21 @@ async fn rtc_task(_spawner: Spawner, rtc_peripheral: ClockPeripherals) {
         match state.state_change {
             StateChanges::TimeSet => {
                 if let Some(time) = state.date_time_from_api {
-                    let _ = rtc.set_datetime(time);
-                    info!("Time received and set");
-                    break;
+                    let result = rtc.set_datetime(time);
+                    match result {
+                        Ok(_) => {
+                            info!("Time received and set");
+                            break;
+                        }
+                        Err(e) => match e {
+                            embassy_rp::rtc::RtcError::NotRunning => {
+                                error!("RTC not running");
+                            }
+                            embassy_rp::rtc::RtcError::InvalidDateTime(e) => {
+                                error!("Invalid date time");
+                            }
+                        },
+                    }
                 }
             }
 
@@ -205,17 +227,47 @@ async fn rtc_task(_spawner: Spawner, rtc_peripheral: ClockPeripherals) {
         }
         // state_sender.send(state.clone()).await;
     }
+    let mut hour = 0;
+    let mut minute = 0;
 
     loop {
-        let time = rtc.now();
-        let unwrapped_time = time.unwrap();
-        info!(
-            "Time: {}:{}{}",
-            unwrapped_time.hour, unwrapped_time.minute, unwrapped_time.second
-        );
+        let possible_time = rtc.now();
+        match possible_time {
+            Ok(time) => {
+                info!("Time: {}:{} {}", time.hour, time.minute, time.second);
+
+                if time.hour != hour || time.minute != minute {
+                    hour = time.hour;
+                    minute = time.minute;
+                    sender.send(GeneralEvents::TimeDigitChanged(time)).await;
+                }
+            }
+            Err(e) => {
+                match e {
+                    embassy_rp::rtc::RtcError::NotRunning => {
+                        error!("RTC not running");
+                    }
+                    embassy_rp::rtc::RtcError::InvalidDateTime(e) => {
+                        error!("Invalid date time");
+                        // error!("Invalid date time: {:?}", e);
+                    }
+                }
+                // error!("Error getting time: {:?}", e);
+            }
+        }
+
+        //TODO catch a digit that is displayed has changed and send new datetime
+
+        // info!(
+        //     "Time: {}:{}{}",
+        //     unwrapped_time.hour, unwrapped_time.minute, unwrapped_time.second
+        // );
         //TODO I guess do a watch to see if a digit that I show change then update the display?
+        // sender
+        //     .send(GeneralEvents::TimeDigitChanged(unwrapped_time))
+        //     .await;
         //Make a struct to share to the display with hour, minute, and day of week
-        Timer::after(Duration::from_secs(5)).await;
+        Timer::after(Duration::from_secs(1)).await;
     }
 }
 
@@ -304,7 +356,24 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                 }
             }
             StateChanges::OfficeStatusUpdated => {}
-            StateChanges::TimeSet => {}
+            StateChanges::TimeSet => {
+                if let Some(date_time) = state.date_time_from_api {
+                    draw_time(date_time, &mut display);
+                }
+                let _ = epd4in2.wake_up(&mut spi_dev, &mut Delay);
+                let _ =
+                    epd4in2.update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay);
+                epd4in2.sleep(&mut spi_dev, &mut Delay).unwrap();
+            }
+            StateChanges::NewTimeDigit => {
+                if let Some(date_time) = state.approximately_current_time {
+                    draw_time(date_time, &mut display);
+                }
+                let _ = epd4in2.wake_up(&mut spi_dev, &mut Delay);
+                let _ =
+                    epd4in2.update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay);
+                epd4in2.sleep(&mut spi_dev, &mut Delay).unwrap();
+            }
         }
         Timer::after_millis(200).await;
     }
@@ -491,11 +560,11 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
 async fn random_10s(_spawner: Spawner) {
     let sender = WEB_REQUEST_EVENT_CHANNEL.sender();
     Timer::after(Duration::from_secs(10)).await;
-    info!("10s are up, calling forecast update");
-    sender.send(WebRequestEvents::UpdateForecast).await;
+    info!("10s are up, calling time api");
     //Calls to get time from the an API
-    Timer::after(Duration::from_secs(5)).await;
     sender.send(WebRequestEvents::GetTime).await;
+    Timer::after(Duration::from_secs(30)).await;
+    sender.send(WebRequestEvents::UpdateForecast).await;
     loop {
         // we either await on the timer or the signal, whichever comes first.
         let futures = select(
