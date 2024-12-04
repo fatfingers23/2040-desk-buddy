@@ -59,8 +59,8 @@ enum WebRequestEvents {
     UpdateOfficeStatus,
 }
 
-enum GeneralEvents<'a> {
-    WeatherUpdated(Test<'a>),
+enum GeneralEvents {
+    WeatherUpdated(WeatherResponse),
 }
 
 /// This is the type of Commands that we will send from the orchestrating task to the worker tasks.
@@ -149,10 +149,12 @@ async fn orchestrate(_spawner: Spawner) {
     loop {
         //Wait for an event
         let event = receiver.receive().await;
-        // match event {
-        //     WebRequestEvents::UpdateWeather => {}
-        //     WebRequestEvents::UpdateOfficeStatus => {}
-        // }
+        match event {
+            GeneralEvents::WeatherUpdated(weather_response) => {
+                info!("Current Temp: {:?}", weather_response.latitude);
+                // _state.weather = Some(weather_response);
+            }
+        }
     }
 }
 
@@ -267,7 +269,6 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
     let receiver = WEB_REQUEST_EVENT_CHANNEL.receiver();
     let sender = GENERAL_EVENT_CHANNEL.sender();
 
-    let mut rx_buffer_office_status = [0; 8320];
     loop {
         //Wait for an event
         let event = receiver.receive().await;
@@ -293,7 +294,8 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
                 let mut rx_buffer = [0; 8320];
                 let result = get_weather_updates(&mut http_client, &mut rx_buffer).await;
                 if let Ok(weather) = result {
-                    let mut time_text: String<10> = String::<10>::new();
+                    sender.send(GeneralEvents::WeatherUpdated(weather)).await;
+                    // let mut time_text: String<10> = heapless::String::<10>::new();
                     // time_text.push_str(weather.daily_units.sunrise).unwrap();
                     // sender
                     //     .send(GeneralEvents::WeatherUpdated(Test {
@@ -308,8 +310,7 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
             WebRequestEvents::UpdateOfficeStatus => {
                 let mut rx_buffer = [0; 8320];
 
-                let result =
-                    get_weather_updates(&mut http_client, &mut rx_buffer_office_status).await;
+                let result = get_weather_updates(&mut http_client, &mut rx_buffer).await;
                 if let Ok(weather) = result {
                     info!("Task 2: {:?}", weather.daily.time[0]);
                     // let weather = get_weather_updates(stack, seed
@@ -326,7 +327,7 @@ async fn random_30s(_spawner: Spawner) {
     loop {
         // we either await on the timer or the signal, whichever comes first.
         let futures = select(
-            Timer::after(Duration::from_secs(30)),
+            Timer::after(Duration::from_secs(10)),
             STOP_FIRST_RANDOM_SIGNAL.wait(),
         )
         .await;
@@ -336,8 +337,8 @@ async fn random_30s(_spawner: Spawner) {
                 info!("30s are up, generating random number");
 
                 sender.send(WebRequestEvents::UpdateWeather).await;
-                Timer::after(Duration::from_secs(4)).await;
-                sender.send(WebRequestEvents::UpdateOfficeStatus).await;
+                // Timer::after(Duration::from_secs(4)).await;
+                // sender.send(WebRequestEvents::UpdateOfficeStatus).await;
             }
             Either::Second(_) => {
                 // we received the signal to stop
@@ -359,7 +360,7 @@ pub enum WebCallError {
 async fn get_weather_updates<'a>(
     http_client: &mut HttpClient<'a, TcpClient<'a, 2>, DnsSocket<'a>>,
     rx_buffer: &'a mut [u8],
-) -> Result<WeatherResponse<'a>, WebCallError> {
+) -> Result<WeatherResponse, WebCallError> {
     let lat = env_value("LAT");
     let long = env_value("LON");
     let unit = env_value("UNIT");
@@ -408,8 +409,8 @@ async fn get_weather_updates<'a>(
     };
     match serde_json_core::de::from_slice::<WeatherResponse>(body.as_bytes()) {
         Ok((output, _used)) => Ok(output),
-        Err(_) => {
-            error!("There was an error deserlizing the weather reuqest");
+        Err(e) => {
+            print_serde_json_error(e);
             return Err(WebCallError::DeserializationError);
         }
     }
@@ -431,4 +432,73 @@ fn draw_text(display: &mut impl DrawTarget<Color = Color>, text: &str, x: i32, y
 
     let _ = Text::with_text_style(text, Point::new(x, y), style, text_style).draw(display);
     debug!("Draw text: {:?}", text);
+}
+
+fn print_serde_json_error(error: serde_json_core::de::Error) {
+    match error {
+        serde_json_core::de::Error::AnyIsUnsupported => {
+            error!("Deserialization error: AnyIsUnsupported")
+        }
+        serde_json_core::de::Error::BytesIsUnsupported => {
+            error!("Deserialization error: BytesIsUnsupported")
+        }
+        serde_json_core::de::Error::EofWhileParsingList => {
+            error!("Deserialization error: EofWhileParsingList")
+        }
+        serde_json_core::de::Error::EofWhileParsingObject => {
+            error!("Deserialization error: EofWhileParsingObject")
+        }
+        serde_json_core::de::Error::EofWhileParsingString => {
+            error!("Deserialization error: EofWhileParsingString")
+        }
+        serde_json_core::de::Error::EofWhileParsingNumber => {
+            error!("Deserialization error: EofWhileParsingNumber")
+        }
+        serde_json_core::de::Error::EofWhileParsingValue => {
+            error!("Deserialization error: EofWhileParsingValue")
+        }
+        serde_json_core::de::Error::ExpectedColon => {
+            error!("Deserialization error: ExpectedColon")
+        }
+        serde_json_core::de::Error::ExpectedListCommaOrEnd => {
+            error!("Deserialization error: ExpectedListCommaOrEnd")
+        }
+        serde_json_core::de::Error::ExpectedObjectCommaOrEnd => {
+            error!("Deserialization error: ExpectedObjectCommaOrEnd")
+        }
+        serde_json_core::de::Error::ExpectedSomeIdent => {
+            error!("Deserialization error: ExpectedSomeIdent")
+        }
+        serde_json_core::de::Error::ExpectedSomeValue => {
+            error!("Deserialization error: ExpectedSomeValue")
+        }
+        serde_json_core::de::Error::InvalidNumber => {
+            error!("Deserialization error: InvalidNumber")
+        }
+        serde_json_core::de::Error::InvalidType => {
+            error!("Deserialization error: InvalidType")
+        }
+        serde_json_core::de::Error::InvalidUnicodeCodePoint => {
+            error!("Deserialization error: InvalidUnicodeCodePoint")
+        }
+        serde_json_core::de::Error::InvalidEscapeSequence => {
+            error!("Deserialization error: InvalidEscapeSequence")
+        }
+        serde_json_core::de::Error::EscapedStringIsTooLong => {
+            error!("Deserialization error: EscapedStringIsTooLong")
+        }
+        serde_json_core::de::Error::KeyMustBeAString => {
+            error!("Deserialization error: KeyMustBeAString")
+        }
+        serde_json_core::de::Error::TrailingCharacters => {
+            error!("Deserialization error: TrailingCharacters")
+        }
+        serde_json_core::de::Error::TrailingComma => {
+            error!("Deserialization error: TrailingComma")
+        }
+        serde_json_core::de::Error::CustomError => {
+            error!("Deserialization error: CustomError")
+        }
+        _ => error!("Deserialization error: Unknown"),
+    }
 }

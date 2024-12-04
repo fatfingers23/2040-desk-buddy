@@ -18,47 +18,47 @@ use serde::Deserialize;
 // 85, 86 	Snow showers slight and heavy
 // 95 * 	Thunderstorm: Slight or moderate
 // 96, 99 * 	Thunderstorm with slight and heavy hail
-// loop {
-//TODO maybe the buffer needs to be bigger for the response?
 
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WeatherResponse<'a> {
+pub struct WeatherResponse {
     pub latitude: f64,
     pub longitude: f64,
     #[serde(rename = "generationtime_ms")]
     pub generationtime_ms: f64,
     #[serde(rename = "utc_offset_seconds")]
     pub utc_offset_seconds: i64,
-    pub timezone: &'a str,
+    pub timezone: String<32>,
     #[serde(rename = "timezone_abbreviation")]
-    pub timezone_abbreviation: &'a str,
+    pub timezone_abbreviation: String<8>,
     pub elevation: f64,
     #[serde(rename = "current_units")]
-    pub current_units: CurrentUnits<'a>,
-    pub current: Current<'a>,
+    pub current_units: CurrentUnits,
+    pub current: Current,
     #[serde(rename = "daily_units")]
-    pub daily_units: DailyUnits<'a>,
+    pub daily_units: DailyUnits,
     pub daily: Daily,
 }
 
+///This is the units used for each of the current measurements
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CurrentUnits<'a> {
-    pub time: &'a str,
-    pub interval: &'a str,
+pub struct CurrentUnits {
+    pub time: String<7>,
+    pub interval: String<7>,
     #[serde(rename = "temperature_2m")]
-    pub temperature_2m: &'a str,
+    pub temperature_2m: String<3>,
     #[serde(rename = "relative_humidity_2m")]
-    pub relative_humidity_2m: &'a str,
-    #[serde(rename = "weather_code")]
-    pub weather_code: &'a str,
+    pub relative_humidity_2m: String<2>,
+    //I think this will always be wmo code. Going to assume it is
+    // #[serde(rename = "weather_code")]
+    // pub weather_code: &'a str,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Current<'a> {
-    pub time: &'a str,
+pub struct Current {
+    pub time: String<16>,
     pub interval: i64,
     #[serde(rename = "temperature_2m")]
     pub temperature_2m: f64,
@@ -71,19 +71,20 @@ pub struct Current<'a> {
 
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DailyUnits<'a> {
-    pub time: &'a str,
-    ///See top for weather code meanings
-    #[serde(rename = "weather_code")]
-    pub weather_code: &'a str,
+pub struct DailyUnits {
+    pub time: String<7>,
+    //I think this will always be wmo code. Going to assume it is
+    // #[serde(rename = "weather_code")]
+    // pub weather_code: &'a str,
     #[serde(rename = "temperature_2m_max")]
-    pub temperature_2m_max: &'a str,
+    pub temperature_2m_max: String<3>,
     #[serde(rename = "temperature_2m_min")]
-    pub temperature_2m_min: &'a str,
-    pub sunrise: &'a str,
-    pub sunset: &'a str,
+    pub temperature_2m_min: String<3>,
+    //Just going to comment these out cause it's all just going to use the same time format
+    // pub sunrise: &'a str,
+    // pub sunset: &'a str,
     #[serde(rename = "precipitation_probability_max")]
-    pub precipitation_probability_max: &'a str,
+    pub precipitation_probability_max: String<1>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
