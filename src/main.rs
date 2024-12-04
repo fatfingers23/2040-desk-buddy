@@ -7,7 +7,7 @@ use core::str::from_utf8;
 use cyw43::JoinOptions;
 use cyw43_driver::{net_task, setup_cyw43};
 use defmt::*;
-use display::draw_weather_forecast_box;
+use display::{draw_current_outside_weather, draw_weather_forecast_box};
 use embassy_executor::Spawner;
 use embassy_futures::select::{select, Either};
 use embassy_net::dns::DnsSocket;
@@ -211,7 +211,7 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
             StateChanges::None => {}
             StateChanges::ForecastUpdated => {
                 if let Some(forecast) = state.forecast {
-                    let mut starting_point = Point::new(0, 145);
+                    let mut forecast_starting_point = Point::new(0, 145);
                     let forecast_box_width = 80;
 
                     //Only have room for a 5 day forecast
@@ -225,7 +225,7 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                         //I think all units are the same so just going to use this one
                         let unit = &forecast.daily_units.temperature_2m_max;
                         draw_weather_forecast_box(
-                            starting_point,
+                            forecast_starting_point,
                             forecast_box_width,
                             daily_date,
                             &unit,
@@ -236,9 +236,16 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                             sunset.clone(),
                             &mut display,
                         );
-                        starting_point.x += forecast_box_width as i32;
+                        forecast_starting_point.x += forecast_box_width as i32;
                     }
 
+                    let current_weather_starting_point = Point::new(300, 45);
+                    draw_current_outside_weather(
+                        current_weather_starting_point,
+                        forecast.current,
+                        forecast.current_units,
+                        &mut display,
+                    );
                     //Do not need to wake up till right before I write since display is just handled on the RP2040
                     let _ = epd4in2.wake_up(&mut spi_dev, &mut Delay);
                     let _ = epd4in2.update_and_display_frame(

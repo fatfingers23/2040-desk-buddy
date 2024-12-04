@@ -69,7 +69,7 @@ pub struct Current {
     pub relative_humidity_2m: i64,
     ///See top for weather code meanings
     #[serde(rename = "weather_code")]
-    pub weather_code: i64,
+    pub weather_code: u8,
 }
 
 ///This is the units used for each of the daily measurements

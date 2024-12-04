@@ -14,9 +14,64 @@ use libm::floor;
 use tinybmp::Bmp;
 
 use crate::io::easy_format_str;
+use crate::response_models::{Current, CurrentUnits, DailyUnits};
 use crate::weather_icons;
 
 /// Forecast display
+
+pub fn draw_current_outside_weather(
+    starting_point: Point,
+    current: Current,
+    units: CurrentUnits,
+    display: &mut impl DrawTarget<Color = Color>,
+) {
+    // let current_box_style = PrimitiveStyleBuilder::new()
+    //     .stroke_color(Color::Black)
+    //     .stroke_width(1)
+    //     .fill_color(Color::White)
+    //     .build();
+
+    // let _ = Rectangle::new(starting_point, Size::new(100, 100))
+    //     .into_styled(current_box_style)
+    //     .draw(display);
+    // let current_weather_starting_point = Point::new(300, 45);
+
+    draw_bmp(
+        display,
+        weather_icons::get_weather_icon(current.weather_code).get_icon(),
+        starting_point.x + 20,
+        starting_point.y + 30,
+    );
+
+    let mut formatting_buffer = [0u8; 520];
+    let current_temp = easy_format_str(
+        format_args!("{}{}", current.temperature_2m, units.temperature_2m),
+        &mut formatting_buffer,
+    );
+
+    draw_text(
+        display,
+        &current_temp.unwrap(),
+        starting_point.x + 30,
+        starting_point.y + 5,
+    );
+
+    let mut formatting_buffer = [0u8; 520];
+    let current_humidity = easy_format_str(
+        format_args!(
+            "{}{}",
+            current.relative_humidity_2m, units.relative_humidity_2m
+        ),
+        &mut formatting_buffer,
+    );
+
+    draw_text(
+        display,
+        &current_humidity.unwrap(),
+        starting_point.x + 30,
+        starting_point.y + 20,
+    );
+}
 
 pub fn draw_weather_forecast_box(
     starting_point: Point,
@@ -78,12 +133,11 @@ pub fn draw_weather_forecast_box(
     let mut formatting_buffer = [0u8; 520];
     let month_day = easy_format_str(format_args!("{}/{}", month, day), &mut formatting_buffer);
 
-    draw_text_font(
+    draw_text(
         display,
         month_day.unwrap(),
         starting_point.x + 16,
         starting_point.y + 6,
-        &profont::PROFONT_12_POINT,
     );
 
     //Draw weather icon
@@ -105,12 +159,11 @@ pub fn draw_weather_forecast_box(
         ),
         &mut formatting_buffer,
     );
-    draw_text_font(
+    draw_text(
         display,
         max_min_text.unwrap(),
         starting_point.x + 5,
         starting_point.y + 35,
-        &profont::PROFONT_12_POINT,
     );
 
     //Sun set and rise section
@@ -122,12 +175,11 @@ pub fn draw_weather_forecast_box(
         starting_point.y + 100,
     );
 
-    draw_text_font(
+    draw_text(
         display,
         &sun_rise_time,
         starting_point.x + 30,
         starting_point.y + 105,
-        &profont::PROFONT_12_POINT,
     );
 
     draw_bmp(
@@ -137,12 +189,11 @@ pub fn draw_weather_forecast_box(
         starting_point.y + 125,
     );
 
-    draw_text_font(
+    draw_text(
         display,
         &sun_set_time,
         starting_point.x + 30,
         starting_point.y + 130,
-        &profont::PROFONT_12_POINT,
     );
 }
 
@@ -153,9 +204,9 @@ fn draw_bmp(display: &mut impl DrawTarget<Color = Color>, bmp_data: &[u8], x: i3
     let _ = Image::new(&bmp, Point::new(x, y)).draw(&mut display.color_converted());
 }
 
-fn _draw_text(display: &mut impl DrawTarget<Color = Color>, text: &str, x: i32, y: i32) {
+fn draw_text(display: &mut impl DrawTarget<Color = Color>, text: &str, x: i32, y: i32) {
     let style = MonoTextStyleBuilder::new()
-        .font(&embedded_graphics::mono_font::ascii::FONT_10X20)
+        .font(&profont::PROFONT_12_POINT)
         .text_color(Color::Black)
         .background_color(Color::White)
         .build();
@@ -166,7 +217,7 @@ fn _draw_text(display: &mut impl DrawTarget<Color = Color>, text: &str, x: i32, 
     debug!("Draw text: {:?}", text);
 }
 
-fn draw_text_font(
+fn _draw_text_font(
     display: &mut impl DrawTarget<Color = Color>,
     text: &str,
     x: i32,
