@@ -115,3 +115,10 @@ pub struct Daily {
     #[serde(rename = "precipitation_probability_max")]
     pub precipitation_probability_max: Vec<i64, 7>,
 }
+
+///time response
+#[derive(Deserialize)]
+pub struct TimeApiResponse<'a> {
+    pub datetime: &'a str,
+    pub day_of_week: u8,
+}

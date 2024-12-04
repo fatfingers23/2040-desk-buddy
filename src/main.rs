@@ -15,6 +15,7 @@ use embassy_net::tcp::client::{TcpClient, TcpClientState};
 use embassy_net::{Config, StackResources};
 use embassy_rp::clocks::RoscRng;
 use embassy_rp::peripherals::{self};
+use embassy_rp::rtc::{DateTime, DayOfWeek};
 use embassy_rp::{
     gpio::{Input, Level, Output, Pull},
     spi::{self, Spi},
@@ -30,11 +31,12 @@ use epd_waveshare::{
     epd4in2_v2::{Display4in2, Epd4in2},
     prelude::*,
 };
+use heapless::Vec;
 use io::easy_format_str;
 use rand::RngCore;
 use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
 use reqwless::request::Method;
-use response_models::ForecastResponse;
+use response_models::{ForecastResponse, TimeApiResponse};
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -50,10 +52,12 @@ mod weather_icons;
 enum WebRequestEvents {
     UpdateForecast,
     UpdateOfficeStatus,
+    GetTime,
 }
 
 enum GeneralEvents {
     ForecastUpdated(ForecastResponse),
+    TimeFromApi(DateTime),
 }
 
 /// This is the type of Commands that we will send from the orchestrating task to the worker tasks.
@@ -70,11 +74,13 @@ enum StateChanges {
     None,
     ForecastUpdated,
     OfficeStatusUpdated,
+    TimeSet,
 }
 
 #[derive(Debug, Clone)]
 struct State {
     forecast: Option<ForecastResponse>,
+    date_time_from_api: Option<DateTime>,
     state_change: StateChanges,
 }
 
@@ -82,6 +88,7 @@ impl State {
     fn new() -> Self {
         Self {
             forecast: None,
+            date_time_from_api: None,
             state_change: StateChanges::None,
         }
     }
@@ -118,18 +125,24 @@ assign_resources! {
         miso: PIN_29,
         dma: DMA_CH0,
     },
+    rtc: ClockPeripherals {
+        rtc: RTC,
+    }
 }
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
+    // let test = p.RTC;
+
     let r = split_resources! {p};
+    // let rtc = embassy_rp::rtc::Rtc::new(p.RTC);
 
     spawner.must_spawn(orchestrate(spawner));
     spawner.must_spawn(wireless_task(spawner, r.cyw43_peripherals));
     //Proof of concept caller
     spawner.must_spawn(random_10s(spawner));
-    //TODO display commented out while disconnected for wifi development
+
     spawner.must_spawn(display_task(r.display_peripherals));
 }
 
@@ -160,6 +173,10 @@ async fn orchestrate(_spawner: Spawner) {
                 }
                 state.state_change = StateChanges::ForecastUpdated;
             }
+            GeneralEvents::TimeFromApi(time) => {
+                state.date_time_from_api = Some(time);
+                state.state_change = StateChanges::TimeSet;
+            }
         }
         state_sender.send(state.clone()).await;
     }
@@ -187,18 +204,11 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
         .expect("eink initalize error");
 
     let mut display = Display4in2::default();
+    //TODO need to come back and look at the epd driver I think there should be a cleaner clear function
     display.clear(Color::White).ok();
     // epd4in2.clear_frame(&mut spi_dev, &mut Delay);
     let _ = epd4in2.update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay);
 
-    // draw_text(&mut display, "Hey", 5, 50);
-    // draw_bmp(
-    //     &mut display,
-    //     include_bytes!("../ferris_w_a_knife.bmp"),
-    //     5,
-    //     100,
-    // );
-    // let _ = epd4in2.update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay);
     epd4in2.sleep(&mut spi_dev, &mut Delay).unwrap();
 
     let receiver = CONSUMER_CHANNEL.receiver();
@@ -257,6 +267,7 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                 }
             }
             StateChanges::OfficeStatusUpdated => {}
+            StateChanges::TimeSet => {}
         }
         Timer::after_millis(200).await;
     }
@@ -292,7 +303,7 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
         seed,
     );
 
-    unwrap!(spawner.spawn(net_task(runner)));
+    spawner.must_spawn(net_task(runner));
     let wifi_network = env_value("WIFI_SSID");
     let wifi_password = env_value("WIFI_PASSWORD");
 
@@ -355,13 +366,83 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
         match event {
             WebRequestEvents::UpdateForecast => {
                 let mut rx_buffer = [0; 8320];
-                let result = get_forecast_update(&mut http_client, &mut rx_buffer).await;
+                let lat = env_value("LAT");
+                let long = env_value("LON");
+                let unit = env_value("UNIT");
+                let timezone = env_value("TIMEZONE");
+
+                let mut url_buffer = [0u8; 1_028];
+
+                let formatted_url = easy_format_str(format_args!("https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit={}&timezone={}",
+                lat, long, unit, timezone), &mut url_buffer);
+
+                let result = get_web_request::<ForecastResponse>(
+                    &mut http_client,
+                    formatted_url.unwrap(),
+                    &mut rx_buffer,
+                )
+                .await;
+
                 if let Ok(forecast) = result {
                     sender.send(GeneralEvents::ForecastUpdated(forecast)).await;
                 }
             }
             WebRequestEvents::UpdateOfficeStatus => {
                 //Call the office status update web request when implemented
+            }
+            WebRequestEvents::GetTime => {
+                let mut rx_buffer = [0; 8320];
+                let timezone = env_value("TIMEZONE");
+
+                let mut url_buffer = [0u8; 1_028]; // im sure this can be much smaller
+
+                let formatted_url = easy_format_str(
+                    format_args!("https://worldtimeapi.org/api/timezone/{}", timezone),
+                    &mut url_buffer,
+                );
+
+                let result = get_web_request::<TimeApiResponse>(
+                    &mut http_client,
+                    formatted_url.unwrap(),
+                    &mut rx_buffer,
+                )
+                .await;
+
+                if let Ok(response) = result {
+                    //TODO need to hide this away
+                    let datetime = response.datetime.split('T').collect::<Vec<&str, 2>>();
+                    //split at -
+                    let date = datetime[0].split('-').collect::<Vec<&str, 3>>();
+                    let year = date[0].parse::<u16>().unwrap();
+                    let month = date[1].parse::<u8>().unwrap();
+                    let day = date[2].parse::<u8>().unwrap();
+                    //split at :
+                    let time = datetime[1].split(':').collect::<Vec<&str, 4>>();
+                    let hour = time[0].parse::<u8>().unwrap();
+                    let minute = time[1].parse::<u8>().unwrap();
+                    //split at .
+                    let second_split = time[2].split('.').collect::<Vec<&str, 2>>();
+                    let second = second_split[0].parse::<f64>().unwrap();
+                    let rtc_time = DateTime {
+                        year: year,
+                        month: month,
+                        day: day,
+                        day_of_week: match response.day_of_week {
+                            0 => DayOfWeek::Sunday,
+                            1 => DayOfWeek::Monday,
+                            2 => DayOfWeek::Tuesday,
+                            3 => DayOfWeek::Wednesday,
+                            4 => DayOfWeek::Thursday,
+                            5 => DayOfWeek::Friday,
+                            6 => DayOfWeek::Saturday,
+                            _ => DayOfWeek::Sunday,
+                        },
+                        hour,
+                        minute,
+                        second: second as u8,
+                    };
+                    sender.send(GeneralEvents::TimeFromApi(rtc_time)).await;
+                }
             }
         }
     }
@@ -374,7 +455,9 @@ async fn random_10s(_spawner: Spawner) {
     Timer::after(Duration::from_secs(10)).await;
     info!("10s are up, calling forecast update");
     sender.send(WebRequestEvents::UpdateForecast).await;
-
+    //Calls to get time from the an API
+    Timer::after(Duration::from_secs(5)).await;
+    sender.send(WebRequestEvents::GetTime).await;
     loop {
         // we either await on the timer or the signal, whichever comes first.
         let futures = select(
@@ -405,28 +488,14 @@ pub enum WebCallError {
     UrlFormatError,
 }
 
-async fn get_forecast_update<'a>(
+async fn get_web_request<'a, ResponseType>(
     http_client: &mut HttpClient<'a, TcpClient<'a, 2>, DnsSocket<'a>>,
+    url: &str,
     rx_buffer: &'a mut [u8],
-) -> Result<ForecastResponse, WebCallError> {
-    let lat = env_value("LAT");
-    let long = env_value("LON");
-    let unit = env_value("UNIT");
-    let timezone = env_value("TIMEZONE");
-
-    let mut url_buffer = [0u8; 1_028]; // im sure this can be much smaller
-
-    let formatted_url = easy_format_str(
-        format_args!("https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit={}&timezone={}",
-         lat, long, unit, timezone), &mut url_buffer);
-    let url = match formatted_url {
-        Ok(url) => url,
-        Err(_) => {
-            error!("Failed to format URL");
-            return Err(WebCallError::UrlFormatError);
-        }
-    };
-
+) -> Result<ResponseType, WebCallError>
+where
+    ResponseType: serde::Deserialize<'a>,
+{
     let mut request = match http_client.request(Method::GET, &url).await {
         Ok(req) => req,
         Err(e) => {
@@ -455,7 +524,7 @@ async fn get_forecast_update<'a>(
             return Err(WebCallError::FailedToReadResponse);
         }
     };
-    match serde_json_core::de::from_slice::<ForecastResponse>(body.as_bytes()) {
+    match serde_json_core::de::from_slice::<ResponseType>(body.as_bytes()) {
         Ok((output, _used)) => Ok(output),
         Err(e) => {
             print_serde_json_error(e);

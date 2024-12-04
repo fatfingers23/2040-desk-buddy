@@ -14,7 +14,7 @@ use libm::floor;
 use tinybmp::Bmp;
 
 use crate::io::easy_format_str;
-use crate::response_models::{Current, CurrentUnits, DailyUnits};
+use crate::response_models::{Current, CurrentUnits};
 use crate::weather_icons;
 
 /// Forecast display
