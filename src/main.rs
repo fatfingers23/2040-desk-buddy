@@ -524,7 +524,8 @@ fn draw_weather_forecast_box(
         month_day.unwrap(),
         starting_point.x + 16,
         126,
-        &embedded_graphics::mono_font::ascii::FONT_9X18_BOLD,
+        &profont::PROFONT_12_POINT,
+        // &embedded_graphics::mono_font::ascii::FONT_9X18_BOLD,
     );
 
     //Outline of the daily forecast box
@@ -577,7 +578,8 @@ fn draw_weather_forecast_box(
         &sun_rise_time,
         starting_point.x + 30,
         240,
-        &embedded_graphics::mono_font::ascii::FONT_9X15_BOLD,
+        &profont::PROFONT_12_POINT,
+        // &embedded_graphics::mono_font::ascii::FONT_9X15_BOLD,
     );
 
     draw_bmp(
@@ -592,7 +594,8 @@ fn draw_weather_forecast_box(
         &sun_set_time,
         starting_point.x + 30,
         265,
-        &embedded_graphics::mono_font::ascii::FONT_9X15_BOLD,
+        &profont::PROFONT_12_POINT,
+        // &embedded_graphics::mono_font::ascii::FONT_9X15_BOLD,
     );
 
     // formatting_buffer = [0u8; 8_320];
