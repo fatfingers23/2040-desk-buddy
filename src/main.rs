@@ -133,13 +133,11 @@ assign_resources! {
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
-    // let test = p.RTC;
-
     let r = split_resources! {p};
-    // let rtc = embassy_rp::rtc::Rtc::new(p.RTC);
 
     spawner.must_spawn(orchestrate(spawner));
     spawner.must_spawn(wireless_task(spawner, r.cyw43_peripherals));
+    spawner.must_spawn(rtc_task(spawner, r.rtc));
     //Proof of concept caller
     spawner.must_spawn(random_10s(spawner));
 
@@ -174,11 +172,50 @@ async fn orchestrate(_spawner: Spawner) {
                 state.state_change = StateChanges::ForecastUpdated;
             }
             GeneralEvents::TimeFromApi(time) => {
+                info!("Time received from API");
                 state.date_time_from_api = Some(time);
                 state.state_change = StateChanges::TimeSet;
             }
         }
         state_sender.send(state.clone()).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn rtc_task(_spawner: Spawner, rtc_peripheral: ClockPeripherals) {
+    // let mut state = State::new();
+    let mut rtc = embassy_rp::rtc::Rtc::new(rtc_peripheral.rtc);
+
+    let receiver = CONSUMER_CHANNEL.receiver();
+    // let sender = EVENT_CHANNEL.sender();
+
+    loop {
+        //Wait for an event
+        let state = receiver.receive().await;
+        match state.state_change {
+            StateChanges::TimeSet => {
+                if let Some(time) = state.date_time_from_api {
+                    let _ = rtc.set_datetime(time);
+                    info!("Time received and set");
+                    break;
+                }
+            }
+
+            _ => {}
+        }
+        // state_sender.send(state.clone()).await;
+    }
+
+    loop {
+        let time = rtc.now();
+        let unwrapped_time = time.unwrap();
+        info!(
+            "Time: {}:{}{}",
+            unwrapped_time.hour, unwrapped_time.minute, unwrapped_time.second
+        );
+        //TODO I guess do a watch to see if a digit that I show change then update the display?
+        //Make a struct to share to the display with hour, minute, and day of week
+        Timer::after(Duration::from_secs(5)).await;
     }
 }
 
@@ -441,6 +478,7 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
                         minute,
                         second: second as u8,
                     };
+                    info!("sending time to rtc");
                     sender.send(GeneralEvents::TimeFromApi(rtc_time)).await;
                 }
             }
