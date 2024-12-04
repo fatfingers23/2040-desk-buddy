@@ -49,11 +49,11 @@ pub enum WeatherIcon {
     // NtTStorms,
     // NtUnknown,
     PartlyCloudy,
-    PartlySunny,
+    // PartlySunny,
     Rain,
     Sleet,
     Snow,
-    Sunny,
+    // Sunny,
     TStorms,
     Unknown,
 }
@@ -160,9 +160,9 @@ impl WeatherIcon {
             WeatherIcon::PartlyCloudy => {
                 include_bytes!("../images/weather_icons/partlycloudy.bmp")
             }
-            WeatherIcon::PartlySunny => {
-                include_bytes!("../images/weather_icons/partlysunny.bmp")
-            }
+            // WeatherIcon::PartlySunny => {
+            //     include_bytes!("../images/weather_icons/partlysunny.bmp")
+            // }
             WeatherIcon::Rain => {
                 include_bytes!("../images/weather_icons/rain.bmp")
             }
@@ -172,9 +172,9 @@ impl WeatherIcon {
             WeatherIcon::Snow => {
                 include_bytes!("../images/weather_icons/snow.bmp")
             }
-            WeatherIcon::Sunny => {
-                include_bytes!("../images/weather_icons/sunny.bmp")
-            }
+            // WeatherIcon::Sunny => {
+            //     include_bytes!("../images/weather_icons/sunny.bmp")
+            // }
             WeatherIcon::TStorms => {
                 include_bytes!("../images/weather_icons/tstorms.bmp")
             }
