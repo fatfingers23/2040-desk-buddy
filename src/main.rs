@@ -37,7 +37,7 @@ use epd_waveshare::{
     epd4in2_v2::{Display4in2, Epd4in2},
     prelude::*,
 };
-use heapless::Vec;
+use heapless::{String, Vec};
 use io::easy_format_str;
 use libm::floor;
 use rand::RngCore;
@@ -228,14 +228,18 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                         let daily_max_temp = &forecast.daily.temperature_2m_max[i];
                         let daily_min_temp = &forecast.daily.temperature_2m_min[i];
                         let daily_weather_code = &forecast.daily.weather_code[i];
+                        let sunrise = &forecast.daily.sunrise[i];
+                        let sunset = &forecast.daily.sunset[i];
+
                         draw_weather_forecast_box(
                             starting_point,
                             daily_date,
                             *daily_max_temp,
                             *daily_min_temp,
                             *daily_weather_code,
+                            sunrise.clone(),
+                            sunset.clone(),
                             &mut display,
-                            forecast.clone(),
                         );
                         starting_point.x += 75;
                     }
@@ -464,12 +468,10 @@ fn draw_weather_forecast_box(
     daily_max_temp: f64,
     daily_min_temp: f64,
     daily_weather_code: u8,
+    sun_rise: String<16>,
+    sun_set: String<16>,
     display: &mut impl DrawTarget<Color = Color>,
-    forecast: ForecastResponse,
 ) {
-    //Shared buffer for all formatting. Make sure to reset after each use
-    let mut formatting_buffer = [0u8; 8_320];
-
     let daily_max_rounded = floor(daily_max_temp);
     let daily_min_rounded = floor(daily_min_temp);
 
@@ -497,7 +499,15 @@ fn draw_weather_forecast_box(
     let _year = split[0];
     let month = split[1];
     let day = split[2];
+    let mut formatting_buffer = [0u8; 520];
+
     let month_day = easy_format_str(format_args!("{}/{}", month, day), &mut formatting_buffer);
+
+    //HACK need to move to a function
+    let sun_rise_split: Vec<&str, 2> = sun_rise.split("T").collect();
+    let sun_rise_time = sun_rise_split[1];
+    let sun_set_split: Vec<&str, 2> = sun_set.split("T").collect();
+    let sun_set_time = sun_set_split[1];
 
     draw_text_font(
         display,
@@ -516,6 +526,8 @@ fn draw_weather_forecast_box(
     .draw(display);
 
     //Draw weather icon
+    //TODO check precipitation_probability_max to decide if to show rain. then can check
+    //if over freezing to decide if snow?
     draw_bmp(
         display,
         weather_icons::get_weather_icon(daily_weather_code).get_icon(),
@@ -524,6 +536,8 @@ fn draw_weather_forecast_box(
     );
 
     //Writing text
+
+    let mut formatting_buffer = [0u8; 520];
 
     //TODO should read from the display formats but I need a font library with °
     let formatted_text = easy_format_str(
@@ -535,6 +549,22 @@ fn draw_weather_forecast_box(
         formatted_text.unwrap(),
         starting_point.x + 7,
         155,
+        &embedded_graphics::mono_font::ascii::FONT_9X15_BOLD,
+    );
+
+    draw_text_font(
+        display,
+        &sun_rise_time,
+        starting_point.x + 16,
+        250,
+        &embedded_graphics::mono_font::ascii::FONT_9X15_BOLD,
+    );
+
+    draw_text_font(
+        display,
+        &sun_set_time,
+        starting_point.x + 16,
+        275,
         &embedded_graphics::mono_font::ascii::FONT_9X15_BOLD,
     );
 
