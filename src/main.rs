@@ -52,6 +52,7 @@ mod cyw43_driver;
 mod env;
 mod io;
 mod response_models;
+mod weather_icons;
 
 #[allow(dead_code)]
 /// These are events that trigger web requests.
@@ -270,10 +271,6 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                             &embedded_graphics::mono_font::ascii::FONT_9X18_BOLD,
                         );
 
-                        // let _ = Rectangle::new(Point::new(5, 120), Size::new(75, 25))
-                        //     .into_styled(forecast_box_style)
-                        //     .draw(&mut display);
-
                         //Outline of the daily forecast box
                         let _ = Rectangle::new(
                             Point::new(starting_point.x, starting_point.y + 25),
@@ -281,9 +278,14 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                         )
                         .into_styled(forecast_box_style)
                         .draw(&mut display);
-                        // let _ = Rectangle::new(Point::new(5, 145), Size::new(75, 150))
-                        //     .into_styled(forecast_box_style)
-                        //     .draw(&mut display);
+
+                        //Draw weather icon
+                        draw_bmp(
+                            &mut display,
+                            weather_icons::get_weather_icon(*daily_weather_code).get_icon(),
+                            starting_point.x + 10,
+                            170,
+                        );
 
                         //Writing text
 
@@ -531,7 +533,7 @@ async fn get_forecast_update<'a>(
     }
 }
 
-fn _draw_bmp(display: &mut impl DrawTarget<Color = Color>, bmp_data: &[u8], x: i32, y: i32) {
+fn draw_bmp(display: &mut impl DrawTarget<Color = Color>, bmp_data: &[u8], x: i32, y: i32) {
     let bmp: Bmp<BinaryColor> = Bmp::from_slice(bmp_data).unwrap();
     let _ = Image::new(&bmp, Point::new(x, y)).draw(&mut display.color_converted());
 }

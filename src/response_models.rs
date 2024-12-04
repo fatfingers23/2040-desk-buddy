@@ -103,7 +103,7 @@ pub struct Daily {
     pub time: Vec<String<10>, 7>,
     ///See top for weather code meanings
     #[serde(rename = "weather_code")]
-    pub weather_code: Vec<i64, 7>,
+    pub weather_code: Vec<u8, 7>,
     #[serde(rename = "temperature_2m_max")]
     pub temperature_2m_max: Vec<f64, 7>,
     #[serde(rename = "temperature_2m_min")]
