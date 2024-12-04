@@ -52,6 +52,14 @@ pub fn draw_weather_forecast_box(
         .into_styled(forecast_box_style)
         .draw(display);
 
+    //Outline of the daily forecast box
+    let _ = Rectangle::new(
+        Point::new(starting_point.x, starting_point.y + 25),
+        Size::new(forecast_box_width, 125),
+    )
+    .into_styled(forecast_box_style)
+    .draw(display);
+
     // Writing the forecast content
 
     //TODO find the day of the week. I think i'll need the RTC set for that
@@ -66,6 +74,7 @@ pub fn draw_weather_forecast_box(
     let sun_set_split: Vec<&str, 2> = sun_set.split("T").collect();
     let sun_set_time = sun_set_split[1];
 
+    //Month/day text
     let mut formatting_buffer = [0u8; 520];
     let month_day = easy_format_str(format_args!("{}/{}", month, day), &mut formatting_buffer);
 
@@ -77,14 +86,6 @@ pub fn draw_weather_forecast_box(
         &profont::PROFONT_12_POINT,
     );
 
-    //Outline of the daily forecast box
-    let _ = Rectangle::new(
-        Point::new(starting_point.x, starting_point.y + 25),
-        Size::new(forecast_box_width, 150),
-    )
-    .into_styled(forecast_box_style)
-    .draw(display);
-
     //Draw weather icon
     //TODO check precipitation_probability_max to decide if to show rain. then can check
     //if over freezing to decide if snow?
@@ -92,13 +93,11 @@ pub fn draw_weather_forecast_box(
         display,
         weather_icons::get_weather_icon(daily_weather_code).get_icon(),
         starting_point.x + 10,
-        starting_point.y + 50,
+        starting_point.y + 45,
     );
 
-    //Writing text
-
+    //Max and min temp
     let mut formatting_buffer = [0u8; 520];
-
     let max_min_text = easy_format_str(
         format_args!(
             "{}{}/{}{}",
@@ -114,18 +113,20 @@ pub fn draw_weather_forecast_box(
         &profont::PROFONT_12_POINT,
     );
 
+    //Sun set and rise section
+
     draw_bmp(
         display,
         include_bytes!("../images/weather_icons/small_sun.bmp"),
         starting_point.x + 1,
-        starting_point.y + 110,
+        starting_point.y + 100,
     );
 
     draw_text_font(
         display,
         &sun_rise_time,
         starting_point.x + 30,
-        starting_point.y + 120,
+        starting_point.y + 105,
         &profont::PROFONT_12_POINT,
     );
 
@@ -133,14 +134,14 @@ pub fn draw_weather_forecast_box(
         display,
         include_bytes!("../images/weather_icons/small_moon.bmp"),
         starting_point.x + 1,
-        starting_point.y + 135,
+        starting_point.y + 125,
     );
 
     draw_text_font(
         display,
         &sun_set_time,
         starting_point.x + 30,
-        starting_point.y + 145,
+        starting_point.y + 130,
         &profont::PROFONT_12_POINT,
     );
 }

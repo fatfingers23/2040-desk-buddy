@@ -211,7 +211,7 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
             StateChanges::None => {}
             StateChanges::ForecastUpdated => {
                 if let Some(forecast) = state.forecast {
-                    let mut starting_point = Point::new(0, 120);
+                    let mut starting_point = Point::new(0, 145);
                     let forecast_box_width = 80;
 
                     //Only have room for a 5 day forecast
