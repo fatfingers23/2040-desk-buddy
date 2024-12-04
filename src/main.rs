@@ -220,7 +220,8 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
             StateChanges::None => {}
             StateChanges::ForecastUpdated => {
                 if let Some(forecast) = state.forecast {
-                    let mut starting_point = Point::new(10, 120);
+                    let mut starting_point = Point::new(0, 120);
+                    let forecast_box_width = 80;
 
                     //Only have room for a 5 day forecast
                     for i in 0..5 {
@@ -230,10 +231,13 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                         let daily_weather_code = &forecast.daily.weather_code[i];
                         let sunrise = &forecast.daily.sunrise[i];
                         let sunset = &forecast.daily.sunset[i];
-
+                        //I think all units are the same so just going to use this one
+                        let unit = &forecast.daily_units.temperature_2m_max;
                         draw_weather_forecast_box(
                             starting_point,
+                            forecast_box_width,
                             daily_date,
+                            &unit,
                             *daily_max_temp,
                             *daily_min_temp,
                             *daily_weather_code,
@@ -241,7 +245,7 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                             sunset.clone(),
                             &mut display,
                         );
-                        starting_point.x += 75;
+                        starting_point.x += forecast_box_width as i32;
                     }
 
                     //Do not need to wake up till right before I write since display is just handled on the RP2040
@@ -464,7 +468,9 @@ async fn get_forecast_update<'a>(
 
 fn draw_weather_forecast_box(
     starting_point: Point,
+    forecast_box_width: u32,
     daily_date: &str,
+    units: &str,
     daily_max_temp: f64,
     daily_min_temp: f64,
     daily_weather_code: u8,
@@ -472,6 +478,10 @@ fn draw_weather_forecast_box(
     sun_set: String<16>,
     display: &mut impl DrawTarget<Color = Color>,
 ) {
+    //sizes
+
+    //TODO need to lower it all about 10 pixels
+    //TODO need to see about measure icons placement from bottom not top
     let daily_max_rounded = floor(daily_max_temp);
     let daily_min_rounded = floor(daily_min_temp);
 
@@ -488,7 +498,7 @@ fn draw_weather_forecast_box(
         .build();
 
     //Top of rectangle showing date
-    let _ = Rectangle::new(starting_point, Size::new(75, 25))
+    let _ = Rectangle::new(starting_point, Size::new(forecast_box_width, 25))
         .into_styled(forecast_box_style)
         .draw(display);
 
@@ -499,15 +509,15 @@ fn draw_weather_forecast_box(
     let _year = split[0];
     let month = split[1];
     let day = split[2];
-    let mut formatting_buffer = [0u8; 520];
-
-    let month_day = easy_format_str(format_args!("{}/{}", month, day), &mut formatting_buffer);
 
     //HACK need to move to a function
     let sun_rise_split: Vec<&str, 2> = sun_rise.split("T").collect();
     let sun_rise_time = sun_rise_split[1];
     let sun_set_split: Vec<&str, 2> = sun_set.split("T").collect();
     let sun_set_time = sun_set_split[1];
+
+    let mut formatting_buffer = [0u8; 520];
+    let month_day = easy_format_str(format_args!("{}/{}", month, day), &mut formatting_buffer);
 
     draw_text_font(
         display,
@@ -520,7 +530,7 @@ fn draw_weather_forecast_box(
     //Outline of the daily forecast box
     let _ = Rectangle::new(
         Point::new(starting_point.x, starting_point.y + 25),
-        Size::new(75, 150),
+        Size::new(forecast_box_width, 150),
     )
     .into_styled(forecast_box_style)
     .draw(display);
@@ -540,31 +550,48 @@ fn draw_weather_forecast_box(
     let mut formatting_buffer = [0u8; 520];
 
     //TODO should read from the display formats but I need a font library with °
-    let formatted_text = easy_format_str(
-        format_args!("{}F/{}F", daily_max_rounded, daily_min_rounded),
+    let max_min_text = easy_format_str(
+        format_args!(
+            "{}{}/{}{}",
+            daily_max_rounded, units, daily_min_rounded, units
+        ),
         &mut formatting_buffer,
     );
     draw_text_font(
         display,
-        formatted_text.unwrap(),
-        starting_point.x + 7,
+        max_min_text.unwrap(),
+        starting_point.x + 5,
         155,
-        &embedded_graphics::mono_font::ascii::FONT_9X15_BOLD,
+        &profont::PROFONT_12_POINT, // &embedded_graphics::mono_font::ascii::FONT_9X15_BOLD,
+    );
+
+    draw_bmp(
+        display,
+        include_bytes!("../images/weather_icons/small_sun.bmp"),
+        starting_point.x + 1,
+        230,
     );
 
     draw_text_font(
         display,
         &sun_rise_time,
-        starting_point.x + 16,
-        250,
+        starting_point.x + 30,
+        240,
         &embedded_graphics::mono_font::ascii::FONT_9X15_BOLD,
+    );
+
+    draw_bmp(
+        display,
+        include_bytes!("../images/weather_icons/small_moon.bmp"),
+        starting_point.x + 1,
+        255,
     );
 
     draw_text_font(
         display,
         &sun_set_time,
-        starting_point.x + 16,
-        275,
+        starting_point.x + 30,
+        265,
         &embedded_graphics::mono_font::ascii::FONT_9X15_BOLD,
     );
 
