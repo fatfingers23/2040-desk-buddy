@@ -103,6 +103,7 @@ trouble-host = { version = "0.1.0", features = ["defmt", "gatt"] }
 
 epd-waveshare = { version = "0.6.0", features = ["graphics"] }
 tinybmp = "0.6.0"
+libm = "0.2.11"
 
 [profile.release]
 debug = 2

@@ -21,6 +21,7 @@ use embassy_rp::{
 use embassy_sync::signal;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel};
 use embassy_time::{Delay, Duration, Timer};
+use embedded_graphics::mono_font::MonoFont;
 use embedded_graphics::primitives::{PrimitiveStyleBuilder, Rectangle};
 use embedded_graphics::{
     image::Image,
@@ -36,7 +37,9 @@ use epd_waveshare::{
     epd4in2_v2::{Display4in2, Epd4in2},
     prelude::*,
 };
+use heapless::Vec;
 use io::easy_format_str;
+use libm::floor;
 use rand::RngCore;
 use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
 use reqwless::request::Method;
@@ -69,6 +72,7 @@ enum Commands {
     Stop,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum StateChanges {
     None,
@@ -215,17 +219,26 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
             StateChanges::None => {}
             StateChanges::ForecastUpdated => {
                 if let Some(forecast) = state.forecast {
-                    for i in 0..7 {
+                    let mut starting_point = Point::new(10, 120);
+
+                    //Only have room for a 5 day forecast
+                    for i in 0..5 {
+                        //Shared buffer for all formatting. Make sure to reset after each use
+                        let mut formatting_buffer = [0u8; 8_320];
+
                         let daily_date = &forecast.daily.time[i];
+
                         let daily_max_temp = &forecast.daily.temperature_2m_max[i];
+                        let daily_max_rounded = floor(*daily_max_temp);
                         let daily_min_temp = &forecast.daily.temperature_2m_min[i];
+                        let daily_min_rounded = floor(*daily_min_temp);
                         let daily_weather_code = &forecast.daily.weather_code[i];
                         info!(
                             "Date: {:?}, Max Temp: {:?}, Min Temp: {:?}, Weather Code: {:?}",
                             daily_date, daily_max_temp, daily_min_temp, daily_weather_code
                         );
 
-                        //Drawing the forecast box
+                        //forecast box style
                         let forecast_box_style = PrimitiveStyleBuilder::new()
                             .stroke_color(Color::Black)
                             .stroke_width(1)
@@ -233,30 +246,61 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                             .build();
 
                         //Top of rectangle showing date
-                        let _ = Rectangle::new(Point::new(5, 120), Size::new(75, 25))
+                        let _ = Rectangle::new(starting_point, Size::new(75, 25))
                             .into_styled(forecast_box_style)
                             .draw(&mut display);
 
-                        //Outline of the daily forecast box
-                        let _ = Rectangle::new(Point::new(5, 145), Size::new(75, 150))
-                            .into_styled(forecast_box_style)
-                            .draw(&mut display);
+                        // Writing the forecast content
 
-                        //Writing text
-                        let mut formatting_buffer = [0u8; 8_320];
-                        let _ = epd4in2.wake_up(&mut spi_dev, &mut Delay);
-
-                        let formatted_text = easy_format_str(
-                            format_args!(
-                                "{}{}",
-                                forecast.current.temperature_2m,
-                                forecast.current_units.temperature_2m
-                            ),
+                        //TODO find the day of the week. I think i'll need the RTC set for that
+                        let split: Vec<&str, 3> = daily_date.split("-").collect();
+                        let _year = split[0];
+                        let month = split[1];
+                        let day = split[2];
+                        let month_day = easy_format_str(
+                            format_args!("{}/{}", month, day),
                             &mut formatting_buffer,
                         );
-                        draw_text(&mut display, formatted_text.unwrap(), 7, 155);
 
-                        formatting_buffer = [0u8; 8_320];
+                        draw_text_font(
+                            &mut display,
+                            month_day.unwrap(),
+                            starting_point.x + 16,
+                            126,
+                            &embedded_graphics::mono_font::ascii::FONT_9X18_BOLD,
+                        );
+
+                        // let _ = Rectangle::new(Point::new(5, 120), Size::new(75, 25))
+                        //     .into_styled(forecast_box_style)
+                        //     .draw(&mut display);
+
+                        //Outline of the daily forecast box
+                        let _ = Rectangle::new(
+                            Point::new(starting_point.x, starting_point.y + 25),
+                            Size::new(75, 150),
+                        )
+                        .into_styled(forecast_box_style)
+                        .draw(&mut display);
+                        // let _ = Rectangle::new(Point::new(5, 145), Size::new(75, 150))
+                        //     .into_styled(forecast_box_style)
+                        //     .draw(&mut display);
+
+                        //Writing text
+
+                        //TODO should read from the display formats but I need a font library with °
+                        let formatted_text = easy_format_str(
+                            format_args!("{}F/{}F", daily_max_rounded, daily_min_rounded),
+                            &mut formatting_buffer,
+                        );
+                        draw_text_font(
+                            &mut display,
+                            formatted_text.unwrap(),
+                            starting_point.x + 7,
+                            155,
+                            &embedded_graphics::mono_font::ascii::FONT_9X15_BOLD,
+                        );
+
+                        // formatting_buffer = [0u8; 8_320];
                         // formatted_text = easy_format_str(
                         //     format_args!(
                         //         "Humidity: {}{}",
@@ -266,7 +310,11 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                         //     &mut formatting_buffer,
                         // );
                         // draw_text(&mut display, formatted_text.unwrap(), 5, 225);
+                        starting_point.x += 75;
                     }
+
+                    //Do not need to wake up till right before I write since display is just handled on the RP2040
+                    let _ = epd4in2.wake_up(&mut spi_dev, &mut Delay);
                     let _ = epd4in2.update_and_display_frame(
                         &mut spi_dev,
                         display.buffer(),
@@ -483,7 +531,7 @@ async fn get_forecast_update<'a>(
     }
 }
 
-fn draw_bmp(display: &mut impl DrawTarget<Color = Color>, bmp_data: &[u8], x: i32, y: i32) {
+fn _draw_bmp(display: &mut impl DrawTarget<Color = Color>, bmp_data: &[u8], x: i32, y: i32) {
     let bmp: Bmp<BinaryColor> = Bmp::from_slice(bmp_data).unwrap();
     let _ = Image::new(&bmp, Point::new(x, y)).draw(&mut display.color_converted());
 }
@@ -491,6 +539,25 @@ fn draw_bmp(display: &mut impl DrawTarget<Color = Color>, bmp_data: &[u8], x: i3
 fn draw_text(display: &mut impl DrawTarget<Color = Color>, text: &str, x: i32, y: i32) {
     let style = MonoTextStyleBuilder::new()
         .font(&embedded_graphics::mono_font::ascii::FONT_10X20)
+        .text_color(Color::Black)
+        .background_color(Color::White)
+        .build();
+
+    let text_style = TextStyleBuilder::new().baseline(Baseline::Top).build();
+
+    let _ = Text::with_text_style(text, Point::new(x, y), style, text_style).draw(display);
+    debug!("Draw text: {:?}", text);
+}
+
+fn draw_text_font(
+    display: &mut impl DrawTarget<Color = Color>,
+    text: &str,
+    x: i32,
+    y: i32,
+    font: &MonoFont,
+) {
+    let style = MonoTextStyleBuilder::new()
+        .font(&font)
         .text_color(Color::Black)
         .background_color(Color::White)
         .build();
