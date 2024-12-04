@@ -523,7 +523,8 @@ fn draw_weather_forecast_box(
         display,
         month_day.unwrap(),
         starting_point.x + 16,
-        126,
+        starting_point.y + 6,
+        // 126,
         &profont::PROFONT_12_POINT,
         // &embedded_graphics::mono_font::ascii::FONT_9X18_BOLD,
     );
@@ -543,7 +544,8 @@ fn draw_weather_forecast_box(
         display,
         weather_icons::get_weather_icon(daily_weather_code).get_icon(),
         starting_point.x + 10,
-        170,
+        starting_point.y + 50,
+        // 170,
     );
 
     //Writing text
@@ -562,7 +564,8 @@ fn draw_weather_forecast_box(
         display,
         max_min_text.unwrap(),
         starting_point.x + 5,
-        155,
+        starting_point.y + 35,
+        // 155,
         &profont::PROFONT_12_POINT, // &embedded_graphics::mono_font::ascii::FONT_9X15_BOLD,
     );
 
@@ -570,14 +573,15 @@ fn draw_weather_forecast_box(
         display,
         include_bytes!("../images/weather_icons/small_sun.bmp"),
         starting_point.x + 1,
-        230,
+        starting_point.y + 110, // 230,
     );
 
     draw_text_font(
         display,
         &sun_rise_time,
         starting_point.x + 30,
-        240,
+        starting_point.y + 120,
+        // 240,
         &profont::PROFONT_12_POINT,
         // &embedded_graphics::mono_font::ascii::FONT_9X15_BOLD,
     );
@@ -586,14 +590,15 @@ fn draw_weather_forecast_box(
         display,
         include_bytes!("../images/weather_icons/small_moon.bmp"),
         starting_point.x + 1,
-        255,
+        starting_point.y + 135, // 255,
     );
 
     draw_text_font(
         display,
         &sun_set_time,
         starting_point.x + 30,
-        265,
+        starting_point.y + 145,
+        // 265,
         &profont::PROFONT_12_POINT,
         // &embedded_graphics::mono_font::ascii::FONT_9X15_BOLD,
     );
