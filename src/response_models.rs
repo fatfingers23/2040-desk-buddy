@@ -19,9 +19,12 @@ use serde::Deserialize;
 // 95 * 	Thunderstorm: Slight or moderate
 // 96, 99 * 	Thunderstorm with slight and heavy hail
 
+/// This is the response from the weather api
+/// You will notice I am using heapless::String instead of &str. I was having issues with sharing the struct between tasks
+/// because of str and decided to just go simple to keep moving
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WeatherResponse {
+pub struct ForecastResponse {
     pub latitude: f64,
     pub longitude: f64,
     #[serde(rename = "generationtime_ms")]
@@ -54,7 +57,7 @@ pub struct CurrentUnits {
     // #[serde(rename = "weather_code")]
     // pub weather_code: &'a str,
 }
-
+///This is the actual current weather measurements
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Current {
@@ -69,6 +72,7 @@ pub struct Current {
     pub weather_code: i64,
 }
 
+///This is the units used for each of the daily measurements
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DailyUnits {
@@ -87,6 +91,7 @@ pub struct DailyUnits {
     pub precipitation_probability_max: String<1>,
 }
 
+///This is the actual daily weather measurements
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 //Hack
