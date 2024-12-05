@@ -3,7 +3,6 @@
 #![feature(impl_trait_in_assoc_type)]
 
 use assign_resources::assign_resources;
-use bt_hci::cmd::info;
 use core::str::from_utf8;
 use cyw43::JoinOptions;
 use cyw43_driver::{net_task, setup_cyw43};
@@ -38,7 +37,6 @@ use rand::RngCore;
 use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
 use reqwless::request::Method;
 use response_models::{ForecastResponse, TimeApiResponse};
-use serde::de;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -162,6 +160,11 @@ async fn main(spawner: Spawner) {
     spawner.must_spawn(random_10s(spawner));
 
     spawner.must_spawn(display_task(r.display_peripherals));
+
+    loop {
+        info!("I'm still alive");
+        Timer::after(Duration::from_secs(300)).await;
+    }
 }
 
 #[embassy_executor::task]
