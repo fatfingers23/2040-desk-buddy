@@ -1,5 +1,5 @@
 use defmt::*;
-use embassy_rp::rtc::DateTime;
+use embassy_rp::rtc::{DateTime, DayOfWeek};
 use embedded_graphics::mono_font::MonoFont;
 use embedded_graphics::primitives::{PrimitiveStyleBuilder, Rectangle};
 use embedded_graphics::{
@@ -116,6 +116,8 @@ pub fn draw_weather_forecast_box(
     daily_weather_code: u8,
     sun_rise: String<16>,
     sun_set: String<16>,
+    possible_current_datetime: Option<DateTime>,
+    current_index: u8,
     display: &mut impl DrawTarget<Color = Color>,
 ) {
     //TODO need to clear out section with white background to display before writing for updates
@@ -167,12 +169,40 @@ pub fn draw_weather_forecast_box(
     let month_day =
         easy_format_str(format_args!("{}/{}", month, day), &mut formatting_buffer).unwrap();
 
-    draw_text(
-        display,
-        month_day,
-        starting_point.x + 16,
-        starting_point.y + 6,
-    );
+    if let Some(current_datetime) = possible_current_datetime {
+        //TODO do the acutal logic to get the day of the week
+
+        let mut day_of_week_index = current_datetime.day_of_week as u8 + current_index;
+        if day_of_week_index > 6 {
+            day_of_week_index = day_of_week_index - 7;
+        }
+
+        let short_hand_day_of_week = match day_of_week_index {
+            0 => "Sun",
+            1 => "Mon",
+            2 => "Tue",
+            3 => "Wed",
+            4 => "Thu",
+            5 => "Fri",
+            6 => "Sat",
+            _ => &month_day,
+        };
+
+        draw_text(
+            display,
+            short_hand_day_of_week,
+            starting_point.x + 16,
+            starting_point.y + 6,
+        );
+    } else {
+        //TODO Index loops over need to if it goes over 6 to reset to 0
+        draw_text(
+            display,
+            month_day,
+            starting_point.x + 16,
+            starting_point.y + 6,
+        );
+    }
 
     //TODO add a list of birthdays to the env file
     if month_day == "12/08" || month_day == "12/24" || month_day == "04/16" || month_day == "06/10"

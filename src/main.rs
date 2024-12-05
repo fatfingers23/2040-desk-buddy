@@ -3,6 +3,7 @@
 #![feature(impl_trait_in_assoc_type)]
 
 use assign_resources::assign_resources;
+use bt_hci::cmd::info;
 use core::str::from_utf8;
 use cyw43::JoinOptions;
 use cyw43_driver::{net_task, setup_cyw43};
@@ -49,6 +50,7 @@ mod response_models;
 mod weather_icons;
 
 #[allow(dead_code)]
+#[derive(Debug, Format)]
 /// These are events that trigger web requests.
 enum WebRequestEvents {
     UpdateForecast,
@@ -56,11 +58,23 @@ enum WebRequestEvents {
     GetTime,
 }
 
+#[derive(Debug)]
 enum GeneralEvents {
     ForecastUpdated(ForecastResponse),
     TimeFromApi(DateTime),
     //TODO also pass what was changed?
     TimeDigitChanged(DateTime),
+}
+
+//TODO need to go to each channel and event and log which is getting called when cause theres a wait happening somewhere
+impl GeneralEvents {
+    fn as_str(&self) -> &str {
+        match self {
+            GeneralEvents::ForecastUpdated(_) => "ForecastUpdated",
+            GeneralEvents::TimeFromApi(_) => "TimeFromApi",
+            GeneralEvents::TimeDigitChanged(_) => "TimeDigitChanged",
+        }
+    }
 }
 
 /// This is the type of Commands that we will send from the orchestrating task to the worker tasks.
@@ -72,7 +86,7 @@ enum Commands {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Format)]
 enum StateChanges {
     None,
     ForecastUpdated,
@@ -163,18 +177,10 @@ async fn orchestrate(_spawner: Spawner) {
     loop {
         //Wait for an event
         let event = receiver.receive().await;
+        info!("Event received: {:?}", event.as_str());
         match event {
             GeneralEvents::ForecastUpdated(forecast_response) => {
                 state.forecast = Some(forecast_response);
-                //POC code. Can be removed
-                if let Some(forecast) = &state.forecast {
-                    let current = &forecast.current;
-                    let current_display = &forecast.current_units;
-                    info!(
-                        "Current Temp: {:?} {}",
-                        current.temperature_2m, current_display.temperature_2m
-                    );
-                }
                 state.state_change = StateChanges::ForecastUpdated;
             }
             GeneralEvents::TimeFromApi(time) => {
@@ -188,6 +194,7 @@ async fn orchestrate(_spawner: Spawner) {
                 state.state_change = StateChanges::NewTimeDigit;
             }
         }
+        info!("State change: {:?}", state.state_change);
         state_sender.send(state.clone()).await;
     }
 }
@@ -288,11 +295,12 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
     epd4in2.sleep(&mut spi_dev, &mut Delay).unwrap();
 
     let receiver = CONSUMER_CHANNEL.receiver();
+
     // let sender = EVENT_CHANNEL.sender();
     loop {
         //TODO how do we decide what has changed?
         let state = receiver.receive().await;
-
+        info!("State received: {:?}", state.state_change);
         match state.state_change {
             StateChanges::None => {}
             StateChanges::ForecastUpdated => {
@@ -320,6 +328,9 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                             *daily_weather_code,
                             sunrise.clone(),
                             sunset.clone(),
+                            //TODO prob change to the updated datetime
+                            state.date_time_from_api.clone(),
+                            i as u8,
                             &mut display,
                         );
                         forecast_starting_point.x += forecast_box_width as i32;
@@ -439,7 +450,7 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
     loop {
         //Wait for an event
         let event = receiver.receive().await;
-
+        info!("Display Event received: {:?}", event);
         //Build the http client
         let mut tls_read_buffer = [0; 16640];
         let mut tls_write_buffer = [0; 16640];
@@ -508,6 +519,7 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
 
                 if let Ok(response) = result {
                     //TODO need to hide this away
+                    //Hell is empty and all the odd string manipulation code is here
                     let datetime = response.datetime.split('T').collect::<Vec<&str, 2>>();
                     //split at -
                     let date = datetime[0].split('-').collect::<Vec<&str, 3>>();
