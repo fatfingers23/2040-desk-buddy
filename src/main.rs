@@ -430,7 +430,7 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                         forecast_starting_point.x += forecast_box_width as i32;
                     }
 
-                    let current_weather_starting_point = Point::new(275, 45);
+                    let current_weather_starting_point = Point::new(85, 50);
                     draw_current_outside_weather(
                         current_weather_starting_point,
                         forecast.current,

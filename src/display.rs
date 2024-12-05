@@ -129,7 +129,7 @@ pub fn draw_current_outside_weather(
         display,
         weather_icons::get_weather_icon(current.weather_code).get_icon(),
         starting_point.x,
-        starting_point.y,
+        starting_point.y - 20,
     );
 
     let mut formatting_buffer = [0u8; 520];
@@ -142,7 +142,7 @@ pub fn draw_current_outside_weather(
         display,
         &current_temp.unwrap(),
         starting_point.x + 58,
-        starting_point.y + 20,
+        starting_point.y,
     );
 
     let mut formatting_buffer = [0u8; 520];
@@ -158,7 +158,7 @@ pub fn draw_current_outside_weather(
         display,
         &current_humidity.unwrap(),
         starting_point.x + 58,
-        starting_point.y + 35,
+        starting_point.y + 15,
     );
 }
 
