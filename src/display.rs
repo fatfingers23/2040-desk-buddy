@@ -15,8 +15,8 @@ use libm::floor;
 use tinybmp::Bmp;
 
 use crate::io::easy_format_str;
-use crate::response_models::{Current, CurrentUnits};
 use crate::weather_icons;
+use crate::web_requests::{Current, CurrentUnits};
 
 ///Draw time
 pub fn draw_time(date_time: DateTime, display: &mut impl DrawTarget<Color = Color>) {

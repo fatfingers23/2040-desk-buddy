@@ -1,4 +1,10 @@
+use core::str::from_utf8;
+
+use defmt::Format;
+use defmt::*;
+use embassy_net::{dns::DnsSocket, tcp::client::TcpClient};
 use heapless::{String, Vec};
+use reqwless::{client::HttpClient, request::Method};
 use serde::Deserialize;
 
 // https://api.open-meteo.com/v1/forecast?latitude=35.7512&longitude=-86.93&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit=fahrenheit&timezone=America/Chicago
@@ -121,4 +127,128 @@ pub struct Daily {
 pub struct TimeApiResponse<'a> {
     pub datetime: &'a str,
     pub day_of_week: u8,
+}
+
+#[derive(Debug, Format)]
+pub enum WebCallError {
+    HttpError(u16),
+    WebRequestError,
+    FailedToReadResponse,
+    DeserializationError,
+    UrlFormatError,
+}
+
+/// Wrapper to help you make a GET request that responses with JSON
+pub async fn get_web_request<'a, ResponseType>(
+    http_client: &mut HttpClient<'a, TcpClient<'a, 4>, DnsSocket<'a>>,
+    url: &str,
+    rx_buffer: &'a mut [u8],
+) -> Result<ResponseType, WebCallError>
+where
+    ResponseType: serde::Deserialize<'a>,
+{
+    let mut request = match http_client.request(Method::GET, &url).await {
+        Ok(req) => req,
+        Err(e) => {
+            error!("Failed to make HTTP request: {:?}", e);
+            return Err(WebCallError::WebRequestError);
+        }
+    };
+
+    let response = match request.send(rx_buffer).await {
+        Ok(resp) => resp,
+        Err(_e) => {
+            error!("Failed to send HTTP request");
+            return Err(WebCallError::WebRequestError);
+        }
+    };
+
+    if !response.status.is_successful() {
+        error!("HTTP request failed with status: {:?}", response.status);
+        return Err(WebCallError::HttpError(response.status.0));
+    }
+
+    let body = match from_utf8(response.body().read_to_end().await.unwrap()) {
+        Ok(b) => b,
+        Err(_e) => {
+            error!("Failed to read response body");
+            return Err(WebCallError::FailedToReadResponse);
+        }
+    };
+    match serde_json_core::de::from_slice::<ResponseType>(body.as_bytes()) {
+        Ok((output, _used)) => Ok(output),
+        Err(e) => {
+            print_serde_json_error(e);
+            return Err(WebCallError::DeserializationError);
+        }
+    }
+}
+
+fn print_serde_json_error(error: serde_json_core::de::Error) {
+    match error {
+        serde_json_core::de::Error::AnyIsUnsupported => {
+            error!("Deserialization error: AnyIsUnsupported")
+        }
+        serde_json_core::de::Error::BytesIsUnsupported => {
+            error!("Deserialization error: BytesIsUnsupported")
+        }
+        serde_json_core::de::Error::EofWhileParsingList => {
+            error!("Deserialization error: EofWhileParsingList")
+        }
+        serde_json_core::de::Error::EofWhileParsingObject => {
+            error!("Deserialization error: EofWhileParsingObject")
+        }
+        serde_json_core::de::Error::EofWhileParsingString => {
+            error!("Deserialization error: EofWhileParsingString")
+        }
+        serde_json_core::de::Error::EofWhileParsingNumber => {
+            error!("Deserialization error: EofWhileParsingNumber")
+        }
+        serde_json_core::de::Error::EofWhileParsingValue => {
+            error!("Deserialization error: EofWhileParsingValue")
+        }
+        serde_json_core::de::Error::ExpectedColon => {
+            error!("Deserialization error: ExpectedColon")
+        }
+        serde_json_core::de::Error::ExpectedListCommaOrEnd => {
+            error!("Deserialization error: ExpectedListCommaOrEnd")
+        }
+        serde_json_core::de::Error::ExpectedObjectCommaOrEnd => {
+            error!("Deserialization error: ExpectedObjectCommaOrEnd")
+        }
+        serde_json_core::de::Error::ExpectedSomeIdent => {
+            error!("Deserialization error: ExpectedSomeIdent")
+        }
+        serde_json_core::de::Error::ExpectedSomeValue => {
+            error!("Deserialization error: ExpectedSomeValue")
+        }
+        serde_json_core::de::Error::InvalidNumber => {
+            error!("Deserialization error: InvalidNumber")
+        }
+        serde_json_core::de::Error::InvalidType => {
+            error!("Deserialization error: InvalidType")
+        }
+        serde_json_core::de::Error::InvalidUnicodeCodePoint => {
+            error!("Deserialization error: InvalidUnicodeCodePoint")
+        }
+        serde_json_core::de::Error::InvalidEscapeSequence => {
+            error!("Deserialization error: InvalidEscapeSequence")
+        }
+        serde_json_core::de::Error::EscapedStringIsTooLong => {
+            error!("Deserialization error: EscapedStringIsTooLong")
+        }
+        serde_json_core::de::Error::KeyMustBeAString => {
+            error!("Deserialization error: KeyMustBeAString")
+        }
+        serde_json_core::de::Error::TrailingCharacters => {
+            error!("Deserialization error: TrailingCharacters")
+        }
+        serde_json_core::de::Error::TrailingComma => {
+            error!("Deserialization error: TrailingComma")
+        }
+        serde_json_core::de::Error::CustomError => {
+            error!("Deserialization error: CustomError")
+        }
+        _ => error!("Deserialization error: Unknown"),
+    }
 }

@@ -4,7 +4,6 @@
 
 use assign_resources::assign_resources;
 use core::cell::RefCell;
-use core::str::from_utf8;
 use cyw43::JoinOptions;
 use cyw43_driver::{net_task, setup_cyw43};
 use defmt::*;
@@ -41,18 +40,18 @@ use heapless::Vec;
 use io::easy_format_str;
 use rand::RngCore;
 use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
-use reqwless::request::Method;
-use response_models::{ForecastResponse, TimeApiResponse};
+use scd4x::types::SensorData;
 use scd4x::Scd4x;
 use static_cell::StaticCell;
+use web_requests::{get_web_request, ForecastResponse, TimeApiResponse};
 use {defmt_rtt as _, panic_probe as _};
 
 mod cyw43_driver;
 mod display;
 mod env;
 mod io;
-mod response_models;
 mod weather_icons;
+mod web_requests;
 
 type I2c0Bus = NoopMutex<RefCell<I2c<'static, I2C0, i2c::Blocking>>>;
 
@@ -69,12 +68,12 @@ enum WebRequestEvents {
     GetTime,
 }
 
-#[derive(Debug)]
 enum GeneralEvents {
     ForecastUpdated(ForecastResponse),
     TimeFromApi(DateTime),
-    //TODO also pass what was changed?
+    //TODO also pass what was changed? Like hour, minute etc
     TimeDigitChanged(DateTime),
+    SensorUpdate(SensorData),
 }
 
 //TODO need to go to each channel and event and log which is getting called when cause theres a wait happening somewhere
@@ -84,6 +83,7 @@ impl GeneralEvents {
             GeneralEvents::ForecastUpdated(_) => "ForecastUpdated",
             GeneralEvents::TimeFromApi(_) => "TimeFromApi",
             GeneralEvents::TimeDigitChanged(_) => "TimeDigitChanged",
+            GeneralEvents::SensorUpdate(_) => "SensorUpdate",
         }
     }
 }
@@ -96,6 +96,14 @@ enum Commands {
     Stop,
 }
 
+///Just a copy of SensorData to have debug, clone and format
+#[derive(Debug, Clone, Format)]
+pub struct InsideSensorData {
+    pub co2: u16,
+    pub temperature: f32,
+    pub humidity: f32,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Format)]
 enum StateChanges {
@@ -104,6 +112,7 @@ enum StateChanges {
     OfficeStatusUpdated,
     TimeSet,
     NewTimeDigit,
+    SensorUpdate,
 }
 
 #[derive(Debug, Clone)]
@@ -111,6 +120,7 @@ struct State {
     forecast: Option<ForecastResponse>,
     date_time_from_api: Option<DateTime>,
     approximately_current_time: Option<DateTime>,
+    sensor_data: Option<InsideSensorData>,
     state_change: StateChanges,
 }
 
@@ -119,8 +129,9 @@ impl State {
         Self {
             forecast: None,
             date_time_from_api: None,
-            state_change: StateChanges::None,
             approximately_current_time: None,
+            sensor_data: None,
+            state_change: StateChanges::None,
         }
     }
 }
@@ -132,8 +143,8 @@ static GENERAL_EVENT_CHANNEL: channel::Channel<CriticalSectionRawMutex, GeneralE
     channel::Channel::new();
 
 //TODO i think having multiple things listening to the consumer channel is the mix up
-//Will come back later to see
-static CONSUMER_CHANNEL: channel::Channel<CriticalSectionRawMutex, State, 2> =
+//Will come back later to see. Looks like that is it
+static CONSUMER_CHANNEL: channel::Channel<CriticalSectionRawMutex, State, 1> =
     channel::Channel::new();
 
 /// Signal for stopping the first random signal task. We use a signal here, because we need no queue. It is suffiient to have one signal active.
@@ -222,6 +233,14 @@ async fn orchestrate(_spawner: Spawner) {
                 state.approximately_current_time = Some(time);
                 state.state_change = StateChanges::NewTimeDigit;
             }
+            GeneralEvents::SensorUpdate(sensor_data) => {
+                state.sensor_data = Some(InsideSensorData {
+                    co2: sensor_data.co2,
+                    temperature: sensor_data.temperature,
+                    humidity: sensor_data.humidity,
+                });
+                state.state_change = StateChanges::SensorUpdate;
+            }
         }
         info!("State change: {:?}", state.state_change);
         state_sender.send(state.clone()).await;
@@ -259,6 +278,7 @@ async fn rtc_task(_spawner: Spawner, rtc_peripheral: ClockPeripherals) {
         }
         // state_sender.send(state.clone()).await;
     }
+
     let mut hour = 0;
     let mut minute = 0;
 
@@ -305,31 +325,35 @@ fn print_rtc_error(e: RtcError) {
 
 #[embassy_executor::task]
 async fn scd_task(_spawner: Spawner, i2c_bus: &'static I2c0Bus) {
-    let fahrenheit = env_value("UNIT") == "fahrenheit";
+    // let fahrenheit = env_value("UNIT") == "fahrenheit";
+    let sender = GENERAL_EVENT_CHANNEL.sender();
 
     let i2c_dev = I2cDevice::new(i2c_bus);
     let mut sensor = Scd4x::new(i2c_dev, Delay);
+
     sensor.stop_periodic_measurement().unwrap();
     sensor.reinit().unwrap();
 
     sensor.start_periodic_measurement().unwrap();
+    //Need to wait 5 seconds before first measurement
     Timer::after(Duration::from_secs(5)).await;
     loop {
         let data = sensor.measurement().unwrap();
-        if fahrenheit {
-            info!(
-                "CO2: {} ppm, Temperature: {}°F, Humidity: {}%",
-                data.co2,
-                data.temperature * 1.8 + 32.0,
-                data.humidity
-            );
-        } else {
-            info!(
-                "CO2: {} ppm, Temperature: {}°C, Humidity: {}%",
-                data.co2, data.temperature, data.humidity
-            );
-        }
-        Timer::after(Duration::from_secs(5)).await;
+        // if fahrenheit {
+        //     info!(
+        //         "CO2: {} ppm, Temperature: {}°F, Humidity: {}%",
+        //         data.co2,
+        //         data.temperature * 1.8 + 32.0,
+        //         data.humidity
+        //     );
+        // } else {
+        //     info!(
+        //         "CO2: {} ppm, Temperature: {}°C, Humidity: {}%",
+        //         data.co2, data.temperature, data.humidity
+        //     );
+        // }
+        sender.send(GeneralEvents::SensorUpdate(data)).await;
+        Timer::after(Duration::from_secs(30)).await;
     }
 }
 
@@ -440,8 +464,8 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                     epd4in2.update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay);
                 epd4in2.sleep(&mut spi_dev, &mut Delay).unwrap();
             }
+            StateChanges::SensorUpdate => {}
         }
-        Timer::after_millis(200).await;
     }
 }
 
@@ -658,128 +682,5 @@ async fn random_10s(_spawner: Spawner) {
                 break;
             }
         }
-    }
-}
-
-#[derive(Debug, Format)]
-pub enum WebCallError {
-    HttpError(u16),
-    WebRequestError,
-    FailedToReadResponse,
-    DeserializationError,
-    UrlFormatError,
-}
-
-async fn get_web_request<'a, ResponseType>(
-    http_client: &mut HttpClient<'a, TcpClient<'a, 4>, DnsSocket<'a>>,
-    url: &str,
-    rx_buffer: &'a mut [u8],
-) -> Result<ResponseType, WebCallError>
-where
-    ResponseType: serde::Deserialize<'a>,
-{
-    let mut request = match http_client.request(Method::GET, &url).await {
-        Ok(req) => req,
-        Err(e) => {
-            error!("Failed to make HTTP request: {:?}", e);
-            return Err(WebCallError::WebRequestError);
-        }
-    };
-
-    let response = match request.send(rx_buffer).await {
-        Ok(resp) => resp,
-        Err(_e) => {
-            error!("Failed to send HTTP request");
-            return Err(WebCallError::WebRequestError);
-        }
-    };
-
-    if !response.status.is_successful() {
-        error!("HTTP request failed with status: {:?}", response.status);
-        return Err(WebCallError::HttpError(response.status.0));
-    }
-
-    let body = match from_utf8(response.body().read_to_end().await.unwrap()) {
-        Ok(b) => b,
-        Err(_e) => {
-            error!("Failed to read response body");
-            return Err(WebCallError::FailedToReadResponse);
-        }
-    };
-    match serde_json_core::de::from_slice::<ResponseType>(body.as_bytes()) {
-        Ok((output, _used)) => Ok(output),
-        Err(e) => {
-            print_serde_json_error(e);
-            return Err(WebCallError::DeserializationError);
-        }
-    }
-}
-
-fn print_serde_json_error(error: serde_json_core::de::Error) {
-    match error {
-        serde_json_core::de::Error::AnyIsUnsupported => {
-            error!("Deserialization error: AnyIsUnsupported")
-        }
-        serde_json_core::de::Error::BytesIsUnsupported => {
-            error!("Deserialization error: BytesIsUnsupported")
-        }
-        serde_json_core::de::Error::EofWhileParsingList => {
-            error!("Deserialization error: EofWhileParsingList")
-        }
-        serde_json_core::de::Error::EofWhileParsingObject => {
-            error!("Deserialization error: EofWhileParsingObject")
-        }
-        serde_json_core::de::Error::EofWhileParsingString => {
-            error!("Deserialization error: EofWhileParsingString")
-        }
-        serde_json_core::de::Error::EofWhileParsingNumber => {
-            error!("Deserialization error: EofWhileParsingNumber")
-        }
-        serde_json_core::de::Error::EofWhileParsingValue => {
-            error!("Deserialization error: EofWhileParsingValue")
-        }
-        serde_json_core::de::Error::ExpectedColon => {
-            error!("Deserialization error: ExpectedColon")
-        }
-        serde_json_core::de::Error::ExpectedListCommaOrEnd => {
-            error!("Deserialization error: ExpectedListCommaOrEnd")
-        }
-        serde_json_core::de::Error::ExpectedObjectCommaOrEnd => {
-            error!("Deserialization error: ExpectedObjectCommaOrEnd")
-        }
-        serde_json_core::de::Error::ExpectedSomeIdent => {
-            error!("Deserialization error: ExpectedSomeIdent")
-        }
-        serde_json_core::de::Error::ExpectedSomeValue => {
-            error!("Deserialization error: ExpectedSomeValue")
-        }
-        serde_json_core::de::Error::InvalidNumber => {
-            error!("Deserialization error: InvalidNumber")
-        }
-        serde_json_core::de::Error::InvalidType => {
-            error!("Deserialization error: InvalidType")
-        }
-        serde_json_core::de::Error::InvalidUnicodeCodePoint => {
-            error!("Deserialization error: InvalidUnicodeCodePoint")
-        }
-        serde_json_core::de::Error::InvalidEscapeSequence => {
-            error!("Deserialization error: InvalidEscapeSequence")
-        }
-        serde_json_core::de::Error::EscapedStringIsTooLong => {
-            error!("Deserialization error: EscapedStringIsTooLong")
-        }
-        serde_json_core::de::Error::KeyMustBeAString => {
-            error!("Deserialization error: KeyMustBeAString")
-        }
-        serde_json_core::de::Error::TrailingCharacters => {
-            error!("Deserialization error: TrailingCharacters")
-        }
-        serde_json_core::de::Error::TrailingComma => {
-            error!("Deserialization error: TrailingComma")
-        }
-        serde_json_core::de::Error::CustomError => {
-            error!("Deserialization error: CustomError")
-        }
-        _ => error!("Deserialization error: Unknown"),
     }
 }
