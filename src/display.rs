@@ -37,11 +37,13 @@ pub fn draw_time(date_time: DateTime, display: &mut impl DrawTarget<Color = Colo
         format_args!("{:02}:{:02} {}", twelve_hour, date_time.minute, am_pm),
         &mut formatting_buffer,
     );
-    let point = Point::new(5, 5);
-    let rectangle_erase_style = PrimitiveStyleBuilder::new()
-        .fill_color(Color::White)
-        .build();
-    let _ = Rectangle::new(point, Size::new(100, 20));
+    // let point = Point::new(5, 5);
+
+    //TODO is this not writing somehwere? May not have to clear out locations for these draw methods i made
+    // let rectangle_erase_style = PrimitiveStyleBuilder::new()
+    //     .fill_color(Color::White)
+    //     .build();
+    // let _ = Rectangle::new(point, Size::new(100, 20));
 
     draw_text(display, formatted_time.unwrap(), 5, 10);
 }
@@ -54,6 +56,8 @@ pub fn draw_current_outside_weather(
     units: CurrentUnits,
     display: &mut impl DrawTarget<Color = Color>,
 ) {
+    //TODO need to clear out section with white background to display before writing for updates
+
     // let current_box_style = PrimitiveStyleBuilder::new()
     //     .stroke_color(Color::Black)
     //     .stroke_width(1)
@@ -114,7 +118,7 @@ pub fn draw_weather_forecast_box(
     sun_set: String<16>,
     display: &mut impl DrawTarget<Color = Color>,
 ) {
-    //TODO need to lower it all about 10 pixels
+    //TODO need to clear out section with white background to display before writing for updates
     //TODO need to see about measure icons placement from bottom not top
     let daily_max_rounded = floor(daily_max_temp);
     let daily_min_rounded = floor(daily_min_temp);
@@ -160,14 +164,26 @@ pub fn draw_weather_forecast_box(
 
     //Month/day text
     let mut formatting_buffer = [0u8; 520];
-    let month_day = easy_format_str(format_args!("{}/{}", month, day), &mut formatting_buffer);
+    let month_day =
+        easy_format_str(format_args!("{}/{}", month, day), &mut formatting_buffer).unwrap();
 
     draw_text(
         display,
-        month_day.unwrap(),
+        month_day,
         starting_point.x + 16,
         starting_point.y + 6,
     );
+
+    //TODO add a list of birthdays to the env file
+    if month_day == "12/08" || month_day == "12/24" || month_day == "04/16" || month_day == "06/10"
+    {
+        draw_bmp(
+            display,
+            include_bytes!("../images/birthday_cake.bmp"),
+            starting_point.x + 58,
+            starting_point.y + 6,
+        );
+    }
 
     //Draw weather icon
     //TODO check precipitation_probability_max to decide if to show rain. then can check

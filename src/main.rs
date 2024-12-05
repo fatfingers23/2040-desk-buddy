@@ -37,6 +37,7 @@ use rand::RngCore;
 use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
 use reqwless::request::Method;
 use response_models::{ForecastResponse, TimeApiResponse};
+use serde::de;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -193,7 +194,6 @@ async fn orchestrate(_spawner: Spawner) {
 
 #[embassy_executor::task]
 async fn rtc_task(_spawner: Spawner, rtc_peripheral: ClockPeripherals) {
-    // let mut state = State::new();
     let mut rtc = embassy_rp::rtc::Rtc::new(rtc_peripheral.rtc);
 
     let receiver = CONSUMER_CHANNEL.receiver();
@@ -234,9 +234,8 @@ async fn rtc_task(_spawner: Spawner, rtc_peripheral: ClockPeripherals) {
         let possible_time = rtc.now();
         match possible_time {
             Ok(time) => {
-                info!("Time: {}:{} {}", time.hour, time.minute, time.second);
-
                 if time.hour != hour || time.minute != minute {
+                    info!("Time: {}:{} {}", time.hour, time.minute, time.second);
                     hour = time.hour;
                     minute = time.minute;
                     sender.send(GeneralEvents::TimeDigitChanged(time)).await;
@@ -255,18 +254,6 @@ async fn rtc_task(_spawner: Spawner, rtc_peripheral: ClockPeripherals) {
                 // error!("Error getting time: {:?}", e);
             }
         }
-
-        //TODO catch a digit that is displayed has changed and send new datetime
-
-        // info!(
-        //     "Time: {}:{}{}",
-        //     unwrapped_time.hour, unwrapped_time.minute, unwrapped_time.second
-        // );
-        //TODO I guess do a watch to see if a digit that I show change then update the display?
-        // sender
-        //     .send(GeneralEvents::TimeDigitChanged(unwrapped_time))
-        //     .await;
-        //Make a struct to share to the display with hour, minute, and day of week
         Timer::after(Duration::from_secs(1)).await;
     }
 }
@@ -457,7 +444,7 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
         let mut tls_read_buffer = [0; 16640];
         let mut tls_write_buffer = [0; 16640];
 
-        let client_state = TcpClientState::<2, 1024, 1024>::new();
+        let client_state = TcpClientState::<4, 1024, 1024>::new();
         let tcp_client = TcpClient::new(stack, &client_state);
         let dns_client = DnsSocket::new(stack);
         let tls_config = TlsConfig::new(
@@ -489,8 +476,13 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
                 )
                 .await;
 
-                if let Ok(forecast) = result {
-                    sender.send(GeneralEvents::ForecastUpdated(forecast)).await;
+                match result {
+                    Ok(forecast) => {
+                        sender.send(GeneralEvents::ForecastUpdated(forecast)).await;
+                    }
+                    Err(e) => {
+                        error!("Failed to get forecast: {:?}", e);
+                    }
                 }
             }
             WebRequestEvents::UpdateOfficeStatus => {
@@ -565,10 +557,11 @@ async fn random_10s(_spawner: Spawner) {
     sender.send(WebRequestEvents::GetTime).await;
     Timer::after(Duration::from_secs(30)).await;
     sender.send(WebRequestEvents::UpdateForecast).await;
+
     loop {
         // we either await on the timer or the signal, whichever comes first.
         let futures = select(
-            Timer::after(Duration::from_secs(10)),
+            Timer::after(Duration::from_secs(150)),
             STOP_FIRST_RANDOM_SIGNAL.wait(),
         )
         .await;
@@ -577,6 +570,7 @@ async fn random_10s(_spawner: Spawner) {
                 // we received are operating on the timer
                 // info!("10s are up, calling forecast update");
                 // sender.send(WebRequestEvents::UpdateForecast).await;
+                sender.send(WebRequestEvents::UpdateForecast).await;
             }
             Either::Second(_) => {
                 // we received the signal to stop
@@ -587,6 +581,7 @@ async fn random_10s(_spawner: Spawner) {
     }
 }
 
+#[derive(Debug, Format)]
 pub enum WebCallError {
     HttpError(u16),
     WebRequestError,
@@ -596,7 +591,7 @@ pub enum WebCallError {
 }
 
 async fn get_web_request<'a, ResponseType>(
-    http_client: &mut HttpClient<'a, TcpClient<'a, 2>, DnsSocket<'a>>,
+    http_client: &mut HttpClient<'a, TcpClient<'a, 4>, DnsSocket<'a>>,
     url: &str,
     rx_buffer: &'a mut [u8],
 ) -> Result<ResponseType, WebCallError>
