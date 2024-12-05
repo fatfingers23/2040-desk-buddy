@@ -105,6 +105,7 @@ epd-waveshare = { version = "0.6.0", features = ["graphics"] }
 tinybmp = "0.6.0"
 libm = "0.2.11"
 profont = "0.7.0"
+scd4x = "0.3.0"
 
 [profile.release]
 debug = 2

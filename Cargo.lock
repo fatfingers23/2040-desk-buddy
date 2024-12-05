@@ -914,6 +914,7 @@ dependencies = [
  "profont",
  "rand",
  "reqwless",
+ "scd4x",
  "serde",
  "serde-json-core",
  "smart-leds 0.3.0",
@@ -2054,6 +2055,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f3cb5ba0dc43242ce17de99c180e96db90b235b8a9fdc9543c96d2209116bd9f"
 
 [[package]]
+name = "scd4x"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9c85038b8388d939adcb1fe894d48dbc596f7596c9f66277782cfef3cd51f85"
+dependencies = [
+ "embedded-hal 1.0.0",
+ "log",
+ "sensirion-i2c",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2092,6 +2104,15 @@ name = "semver-parser"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"
+
+[[package]]
+name = "sensirion-i2c"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fb9009045fc9b4e9e37e670cc407baf85c216ebac2fb0932d4b6f490445bafc"
+dependencies = [
+ "embedded-hal 1.0.0",
+]
 
 [[package]]
 name = "serde"

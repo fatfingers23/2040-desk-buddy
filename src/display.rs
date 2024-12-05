@@ -1,5 +1,5 @@
 use defmt::*;
-use embassy_rp::rtc::{DateTime, DayOfWeek};
+use embassy_rp::rtc::DateTime;
 use embedded_graphics::mono_font::MonoFont;
 use embedded_graphics::primitives::{PrimitiveStyleBuilder, Rectangle};
 use embedded_graphics::{
@@ -21,9 +21,13 @@ use crate::weather_icons;
 ///Draw time
 pub fn draw_time(date_time: DateTime, display: &mut impl DrawTarget<Color = Color>) {
     let mut am = true;
-    let twelve_hour = if date_time.hour > 12 {
+    let twelve_hour = if date_time.hour >= 12 {
         am = false;
-        date_time.hour - 12
+        if date_time.hour == 12 {
+            12
+        } else {
+            date_time.hour - 12
+        }
     } else if date_time.hour == 0 {
         12
     } else {

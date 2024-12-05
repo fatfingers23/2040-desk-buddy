@@ -3,24 +3,29 @@
 #![feature(impl_trait_in_assoc_type)]
 
 use assign_resources::assign_resources;
-use bt_hci::cmd::info;
+use core::cell::RefCell;
 use core::str::from_utf8;
 use cyw43::JoinOptions;
 use cyw43_driver::{net_task, setup_cyw43};
 use defmt::*;
 use display::{draw_current_outside_weather, draw_time, draw_weather_forecast_box};
+use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_futures::select::{select, Either};
 use embassy_net::dns::DnsSocket;
 use embassy_net::tcp::client::{TcpClient, TcpClientState};
 use embassy_net::{Config, StackResources};
+use embassy_rp::bind_interrupts;
 use embassy_rp::clocks::RoscRng;
-use embassy_rp::peripherals::{self};
-use embassy_rp::rtc::{DateTime, DayOfWeek};
+use embassy_rp::i2c::I2c;
+use embassy_rp::i2c::{self, InterruptHandler};
+use embassy_rp::peripherals::{self, I2C0};
+use embassy_rp::rtc::{DateTime, DayOfWeek, RtcError};
 use embassy_rp::{
     gpio::{Input, Level, Output, Pull},
     spi::{self, Spi},
 };
+use embassy_sync::blocking_mutex::NoopMutex;
 use embassy_sync::signal;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel};
 use embassy_time::{Delay, Duration, Timer};
@@ -38,6 +43,7 @@ use rand::RngCore;
 use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
 use reqwless::request::Method;
 use response_models::{ForecastResponse, TimeApiResponse};
+use scd4x::Scd4x;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -47,6 +53,12 @@ mod env;
 mod io;
 mod response_models;
 mod weather_icons;
+
+type I2c0Bus = NoopMutex<RefCell<I2c<'static, I2C0, i2c::Blocking>>>;
+
+bind_interrupts!(struct Irqs {
+    I2C0_IRQ => InterruptHandler<I2C0>;
+});
 
 #[allow(dead_code)]
 #[derive(Debug, Format)]
@@ -156,12 +168,23 @@ async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
     let r = split_resources! {p};
 
+    let i2c = I2c::new_blocking(p.I2C0, p.PIN_21, p.PIN_20, i2c::Config::default());
+    static I2C_BUS: StaticCell<I2c0Bus> = StaticCell::new();
+    // let i2c_bus = I2C_BUS.init(Mutex::new(i2c));
+    let i2c_bus = NoopMutex::new(RefCell::new(i2c));
+    let i2c_bus = I2C_BUS.init(i2c_bus);
+
     spawner.must_spawn(orchestrate(spawner));
     spawner.must_spawn(wireless_task(spawner, r.cyw43_peripherals));
+
+    //Sensors/RTC tasks
     spawner.must_spawn(rtc_task(spawner, r.rtc));
-    //Proof of concept caller
+    spawner.must_spawn(scd_task(spawner, i2c_bus));
+
+    //Timings tasks?
     spawner.must_spawn(random_10s(spawner));
 
+    //Display task
     spawner.must_spawn(display_task(r.display_peripherals));
 
     loop {
@@ -225,14 +248,9 @@ async fn rtc_task(_spawner: Spawner, rtc_peripheral: ClockPeripherals) {
                             info!("Time received and set");
                             break;
                         }
-                        Err(e) => match e {
-                            embassy_rp::rtc::RtcError::NotRunning => {
-                                error!("RTC not running");
-                            }
-                            embassy_rp::rtc::RtcError::InvalidDateTime(e) => {
-                                error!("Invalid date time");
-                            }
-                        },
+                        Err(e) => {
+                            print_rtc_error(e);
+                        }
                     }
                 }
             }
@@ -256,19 +274,62 @@ async fn rtc_task(_spawner: Spawner, rtc_peripheral: ClockPeripherals) {
                 }
             }
             Err(e) => {
-                match e {
-                    embassy_rp::rtc::RtcError::NotRunning => {
-                        error!("RTC not running");
-                    }
-                    embassy_rp::rtc::RtcError::InvalidDateTime(e) => {
-                        error!("Invalid date time");
-                        // error!("Invalid date time: {:?}", e);
-                    }
-                }
-                // error!("Error getting time: {:?}", e);
+                print_rtc_error(e);
             }
         }
         Timer::after(Duration::from_secs(1)).await;
+    }
+}
+
+fn print_rtc_error(e: RtcError) {
+    match e {
+        embassy_rp::rtc::RtcError::NotRunning => {
+            error!("RTC not running");
+        }
+        embassy_rp::rtc::RtcError::InvalidDateTime(e) => {
+            match e {
+                embassy_rp::rtc::DateTimeError::InvalidYear => error!("Invalid year"),
+                embassy_rp::rtc::DateTimeError::InvalidMonth => error!("Invalid month"),
+                embassy_rp::rtc::DateTimeError::InvalidDay => error!("Invalid day"),
+                embassy_rp::rtc::DateTimeError::InvalidDayOfWeek(dow) => {
+                    error!("Invalid day of week: {}", dow)
+                }
+                embassy_rp::rtc::DateTimeError::InvalidHour => error!("Invalid hour"),
+                embassy_rp::rtc::DateTimeError::InvalidMinute => error!("Invalid minute"),
+                embassy_rp::rtc::DateTimeError::InvalidSecond => error!("Invalid second"),
+            }
+            error!("Invalid date time");
+        }
+    };
+}
+
+#[embassy_executor::task]
+async fn scd_task(_spawner: Spawner, i2c_bus: &'static I2c0Bus) {
+    let fahrenheit = env_value("UNIT") == "fahrenheit";
+
+    let i2c_dev = I2cDevice::new(i2c_bus);
+    let mut sensor = Scd4x::new(i2c_dev, Delay);
+    sensor.stop_periodic_measurement().unwrap();
+    sensor.reinit().unwrap();
+
+    sensor.start_periodic_measurement().unwrap();
+    Timer::after(Duration::from_secs(5)).await;
+    loop {
+        let data = sensor.measurement().unwrap();
+        if fahrenheit {
+            info!(
+                "CO2: {} ppm, Temperature: {}°F, Humidity: {}%",
+                data.co2,
+                data.temperature * 1.8 + 32.0,
+                data.humidity
+            );
+        } else {
+            info!(
+                "CO2: {} ppm, Temperature: {}°C, Humidity: {}%",
+                data.co2, data.temperature, data.humidity
+            );
+        }
+        Timer::after(Duration::from_secs(5)).await;
     }
 }
 
