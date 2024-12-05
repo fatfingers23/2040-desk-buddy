@@ -1,3 +1,7 @@
+use crate::env::env_value;
+use crate::io::easy_format_str;
+use crate::web_requests::{Current, CurrentUnits};
+use crate::{weather_icons, InsideSensorData};
 use defmt::*;
 use embassy_rp::rtc::DateTime;
 use embedded_graphics::mono_font::MonoFont;
@@ -11,12 +15,66 @@ use embedded_graphics::{
 };
 use epd_waveshare::color::Color;
 use heapless::{String, Vec};
-use libm::floor;
+use libm::{floor, roundf};
 use tinybmp::Bmp;
 
-use crate::io::easy_format_str;
-use crate::weather_icons;
-use crate::web_requests::{Current, CurrentUnits};
+pub fn draw_scd_data(
+    starting_point: Point,
+    sensor_data: InsideSensorData,
+    display: &mut impl DrawTarget<Color = Color>,
+) {
+    let mut formatting_buffer = [0u8; 520];
+    let fahrenheit = env_value("UNIT") == "fahrenheit";
+    let temp = if fahrenheit {
+        easy_format_str(
+            format_args!("{}°F", roundf(sensor_data.temperature * 1.8 + 32.0)),
+            &mut formatting_buffer,
+        )
+    } else {
+        easy_format_str(
+            format_args!("{}°C", roundf(sensor_data.temperature)),
+            &mut formatting_buffer,
+        )
+    };
+
+    let mut formatting_buffer = [0u8; 520];
+    let humidity = easy_format_str(
+        format_args!("{}%", roundf(sensor_data.humidity)),
+        &mut formatting_buffer,
+    );
+    let mut formatting_buffer = [0u8; 520];
+    let co2 = easy_format_str(
+        format_args!("{}ppm", sensor_data.co2),
+        &mut formatting_buffer,
+    );
+    // (5,50)
+    draw_bmp(
+        display,
+        include_bytes!("../images/house_fill.bmp"),
+        starting_point.x,
+        starting_point.y,
+    );
+    // draw_text(display, temp.unwrap(), 38, 50);
+    draw_text(
+        display,
+        temp.unwrap(),
+        starting_point.x + 33,
+        starting_point.y,
+    );
+
+    draw_text(
+        display,
+        humidity.unwrap(),
+        starting_point.x + 33,
+        starting_point.y + 15,
+    );
+    draw_text(
+        display,
+        co2.unwrap(),
+        starting_point.x + 33,
+        starting_point.y + 30,
+    );
+}
 
 ///Draw time
 pub fn draw_time(date_time: DateTime, display: &mut impl DrawTarget<Color = Color>) {
@@ -38,30 +96,24 @@ pub fn draw_time(date_time: DateTime, display: &mut impl DrawTarget<Color = Colo
 
     let mut formatting_buffer = [0u8; 520];
     let formatted_time = easy_format_str(
-        format_args!("{:02}:{:02} {}", twelve_hour, date_time.minute, am_pm),
+        format_args!(
+            "{:02}:{:02} {} {}/{}/{}",
+            twelve_hour, date_time.minute, am_pm, date_time.month, date_time.day, date_time.year
+        ),
         &mut formatting_buffer,
     );
-    // let point = Point::new(5, 5);
-
-    //TODO is this not writing somehwere? May not have to clear out locations for these draw methods i made
-    // let rectangle_erase_style = PrimitiveStyleBuilder::new()
-    //     .fill_color(Color::White)
-    //     .build();
-    // let _ = Rectangle::new(point, Size::new(100, 20));
 
     draw_text(display, formatted_time.unwrap(), 5, 10);
 }
 
-/// Forecast display
-
+/// Draw the current outside weather
 pub fn draw_current_outside_weather(
     starting_point: Point,
     current: Current,
     units: CurrentUnits,
     display: &mut impl DrawTarget<Color = Color>,
 ) {
-    //TODO need to clear out section with white background to display before writing for updates
-
+    //Place holders to help with design
     // let current_box_style = PrimitiveStyleBuilder::new()
     //     .stroke_color(Color::Black)
     //     .stroke_width(1)
@@ -76,8 +128,8 @@ pub fn draw_current_outside_weather(
     draw_bmp(
         display,
         weather_icons::get_weather_icon(current.weather_code).get_icon(),
-        starting_point.x + 20,
-        starting_point.y + 30,
+        starting_point.x,
+        starting_point.y,
     );
 
     let mut formatting_buffer = [0u8; 520];
@@ -89,8 +141,8 @@ pub fn draw_current_outside_weather(
     draw_text(
         display,
         &current_temp.unwrap(),
-        starting_point.x + 30,
-        starting_point.y + 5,
+        starting_point.x + 58,
+        starting_point.y + 20,
     );
 
     let mut formatting_buffer = [0u8; 520];
@@ -105,8 +157,8 @@ pub fn draw_current_outside_weather(
     draw_text(
         display,
         &current_humidity.unwrap(),
-        starting_point.x + 30,
-        starting_point.y + 20,
+        starting_point.x + 58,
+        starting_point.y + 35,
     );
 }
 
@@ -124,8 +176,8 @@ pub fn draw_weather_forecast_box(
     current_index: u8,
     display: &mut impl DrawTarget<Color = Color>,
 ) {
-    //TODO need to clear out section with white background to display before writing for updates
     //TODO need to see about measure icons placement from bottom not top
+    //This is about how some weather icons are taller than others
     let daily_max_rounded = floor(daily_max_temp);
     let daily_min_rounded = floor(daily_min_temp);
 
@@ -155,8 +207,6 @@ pub fn draw_weather_forecast_box(
     .draw(display);
 
     // Writing the forecast content
-
-    //TODO find the day of the week. I think i'll need the RTC set for that
     let split: Vec<&str, 3> = daily_date.split("-").collect();
     let _year = split[0];
     let month = split[1];

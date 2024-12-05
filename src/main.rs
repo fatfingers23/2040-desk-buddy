@@ -7,7 +7,7 @@ use core::cell::RefCell;
 use cyw43::JoinOptions;
 use cyw43_driver::{net_task, setup_cyw43};
 use defmt::*;
-use display::{draw_current_outside_weather, draw_time, draw_weather_forecast_box};
+use display::{draw_current_outside_weather, draw_scd_data, draw_time, draw_weather_forecast_box};
 use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_futures::select::{select, Either};
@@ -144,7 +144,7 @@ static GENERAL_EVENT_CHANNEL: channel::Channel<CriticalSectionRawMutex, GeneralE
 
 //TODO i think having multiple things listening to the consumer channel is the mix up
 //Will come back later to see. Looks like that is it
-static CONSUMER_CHANNEL: channel::Channel<CriticalSectionRawMutex, State, 1> =
+static CONSUMER_CHANNEL: channel::Channel<CriticalSectionRawMutex, State, 2> =
     channel::Channel::new();
 
 /// Signal for stopping the first random signal task. We use a signal here, because we need no queue. It is suffiient to have one signal active.
@@ -256,6 +256,7 @@ async fn rtc_task(_spawner: Spawner, rtc_peripheral: ClockPeripherals) {
 
     loop {
         //Wait for an event
+        //TODO this task does not always bail after time is set may need to do the task or thing and send another set event?
         let state = receiver.receive().await;
         info!("State received RTC: {:?}", state.state_change);
         match state.state_change {
@@ -283,6 +284,7 @@ async fn rtc_task(_spawner: Spawner, rtc_peripheral: ClockPeripherals) {
     let mut minute = 0;
 
     loop {
+        //TODO need a loop that watches for event to set time as well for daily for time drift?
         let possible_time = rtc.now();
         match possible_time {
             Ok(time) => {
@@ -428,7 +430,7 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                         forecast_starting_point.x += forecast_box_width as i32;
                     }
 
-                    let current_weather_starting_point = Point::new(300, 45);
+                    let current_weather_starting_point = Point::new(275, 45);
                     draw_current_outside_weather(
                         current_weather_starting_point,
                         forecast.current,
@@ -464,7 +466,12 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                     epd4in2.update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay);
                 epd4in2.sleep(&mut spi_dev, &mut Delay).unwrap();
             }
-            StateChanges::SensorUpdate => {}
+            StateChanges::SensorUpdate => {
+                //TODO not updating the display and just let another like digit change update it
+                if let Some(sensor_data) = state.sensor_data {
+                    draw_scd_data(Point::new(5, 50), sensor_data, &mut display);
+                }
+            }
         }
     }
 }
@@ -652,6 +659,7 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
 }
 
 ///Proof of concept on something to call the tasks
+/// Mostly just used in testing right now but will probably be a timings task like send an event every minute, 10, etc
 #[embassy_executor::task]
 async fn random_10s(_spawner: Spawner) {
     let sender = WEB_REQUEST_EVENT_CHANNEL.sender();
