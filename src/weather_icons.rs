@@ -33,7 +33,7 @@ pub enum WeatherIcon {
     // NtChanceSleet,
     // NtChanceSnow,
     // NtChanceStorms,
-    // NtClear,
+    NtClear,
     // NtCloudy,
     // NtFlurries,
     // NtFog,
@@ -112,9 +112,9 @@ impl WeatherIcon {
             // WeatherIcon::NtChanceStorms => {
             //     include_bytes!("../images/weather_icons/nt_chancetstorms.bmp")
             // }
-            // WeatherIcon::NtClear => {
-            //     include_bytes!("../images/weather_icons/nt_clear.bmp")
-            // }
+            WeatherIcon::NtClear => {
+                include_bytes!("../images/weather_icons/nt_clear.bmp")
+            }
             // WeatherIcon::NtCloudy => {
             //     include_bytes!("../images/weather_icons/nt_cloudy.bmp")
             // }
@@ -202,5 +202,26 @@ pub fn get_weather_icon(code: u8) -> WeatherIcon {
         85 | 86 => WeatherIcon::Snow,
         95 | 96 | 99 => WeatherIcon::TStorms,
         _ => WeatherIcon::Unknown,
+    }
+}
+
+pub fn get_night_weather_icon(code: u8) -> WeatherIcon {
+    //TODO Need to implement night time icons
+    match code {
+        0 => WeatherIcon::NtClear,
+        // 1 => WeatherIcon::PartlyCloudy,
+        // 2 => WeatherIcon::MostlyCloudy,
+        // 3 => WeatherIcon::Cloudy,
+        // 45 | 48 => WeatherIcon::Fog,
+        // 51 | 53 | 55 => WeatherIcon::ChanceRain,
+        // 56 | 57 => WeatherIcon::ChanceSleet,
+        // 61 | 63 | 65 => WeatherIcon::Rain,
+        // 66 | 67 => WeatherIcon::Sleet,
+        // 71 => WeatherIcon::Flurries,
+        // 73 | 75 | 77 => WeatherIcon::Snow,
+        // 80 | 81 | 82 => WeatherIcon::Rain,
+        // 85 | 86 => WeatherIcon::Snow,
+        // 95 | 96 | 99 => WeatherIcon::TStorms,
+        _ => WeatherIcon::NtClear, // _ => WeatherIcon::Unknown,
     }
 }

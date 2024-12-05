@@ -36,7 +36,7 @@ use epd_waveshare::{
     epd4in2_v2::{Display4in2, Epd4in2},
     prelude::*,
 };
-use heapless::Vec;
+use heapless::{String, Vec};
 use io::easy_format_str;
 use rand::RngCore;
 use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
@@ -144,7 +144,7 @@ static GENERAL_EVENT_CHANNEL: channel::Channel<CriticalSectionRawMutex, GeneralE
 
 //TODO i think having multiple things listening to the consumer channel is the mix up
 //Will come back later to see. Looks like that is it
-static CONSUMER_CHANNEL: channel::Channel<CriticalSectionRawMutex, State, 2> =
+static CONSUMER_CHANNEL: channel::Channel<CriticalSectionRawMutex, State, 1> =
     channel::Channel::new();
 
 /// Signal for stopping the first random signal task. We use a signal here, because we need no queue. It is suffiient to have one signal active.
@@ -196,6 +196,9 @@ async fn main(spawner: Spawner) {
     spawner.must_spawn(random_10s(spawner));
 
     //Display task
+    //HACK having a race condition with the RTC task where its in a loop sometimes so just going wait 30 seconds
+    //Before starting the display task so RTC and forecast can all be set
+    Timer::after(Duration::from_secs(30)).await;
     spawner.must_spawn(display_task(r.display_peripherals));
 
     loop {
@@ -265,6 +268,10 @@ async fn rtc_task(_spawner: Spawner, rtc_peripheral: ClockPeripherals) {
                     let result = rtc.set_datetime(time);
                     match result {
                         Ok(_) => {
+                            let time_now = rtc.now();
+                            if let Ok(time) = time_now {
+                                sender.send(GeneralEvents::TimeDigitChanged(time)).await;
+                            }
                             info!("Time received and set");
                             break;
                         }
@@ -401,7 +408,7 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                 if let Some(forecast) = state.forecast {
                     let mut forecast_starting_point = Point::new(0, 145);
                     let forecast_box_width = 80;
-
+                    let mut todays_sunset: String<16> = String::new();
                     //Only have room for a 5 day forecast
                     for i in 0..5 {
                         let daily_date = &forecast.daily.time[i];
@@ -412,6 +419,10 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                         let sunset = &forecast.daily.sunset[i];
                         //I think all units are the same so just going to use this one
                         let unit = &forecast.daily_units.temperature_2m_max;
+                        if i == 0 {
+                            todays_sunset = sunset.clone();
+                        }
+
                         draw_weather_forecast_box(
                             forecast_starting_point,
                             forecast_box_width,
@@ -430,11 +441,34 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                         forecast_starting_point.x += forecast_box_width as i32;
                     }
 
+                    //Current forecast
+                    //TODO Really should be a method
+                    //HACK finding out if it's night time. Really just need a method to parse these timestamps out to datetime or something
+                    let sunset_split = todays_sunset.split('T').collect::<Vec<&str, 2>>();
+                    let sun_set_time = sunset_split[1];
+                    let sun_set_time_split = sun_set_time.split(':').collect::<Vec<&str, 2>>();
+                    let sunset_hour = sun_set_time_split[0].parse::<u8>().unwrap();
+                    let sunset_minute = sun_set_time_split[1].parse::<u8>().unwrap();
+                    let mut daytime = true;
+                    if let Some(current_time) = state.approximately_current_time {
+                        info!(
+                            "Current time: {}:{}:{} ",
+                            current_time.hour, current_time.minute, current_time.second
+                        );
+                        if current_time.hour > sunset_hour
+                            || (sunset_hour == current_time.hour
+                                && current_time.minute > sunset_minute)
+                        {
+                            daytime = false;
+                        }
+                    }
                     let current_weather_starting_point = Point::new(85, 50);
+
                     draw_current_outside_weather(
                         current_weather_starting_point,
                         forecast.current,
                         forecast.current_units,
+                        daytime,
                         &mut display,
                     );
                     //Do not need to wake up till right before I write since display is just handled on the RP2040
@@ -449,13 +483,8 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
             }
             StateChanges::OfficeStatusUpdated => {}
             StateChanges::TimeSet => {
-                if let Some(date_time) = state.date_time_from_api {
-                    draw_time(date_time, &mut display);
-                }
-                let _ = epd4in2.wake_up(&mut spi_dev, &mut Delay);
-                let _ =
-                    epd4in2.update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay);
-                epd4in2.sleep(&mut spi_dev, &mut Delay).unwrap();
+                //Ignoring this event and it should hopefully not get hit since RTC loads first
+                //All time updates for display will come via the time digit change event
             }
             StateChanges::NewTimeDigit => {
                 if let Some(date_time) = state.approximately_current_time {

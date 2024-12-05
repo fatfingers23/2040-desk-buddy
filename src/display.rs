@@ -111,6 +111,7 @@ pub fn draw_current_outside_weather(
     starting_point: Point,
     current: Current,
     units: CurrentUnits,
+    daytime: bool,
     display: &mut impl DrawTarget<Color = Color>,
 ) {
     //Place holders to help with design
@@ -125,11 +126,16 @@ pub fn draw_current_outside_weather(
     //     .draw(display);
     // let current_weather_starting_point = Point::new(300, 45);
 
+    let current_image = match daytime {
+        true => weather_icons::get_weather_icon(current.weather_code).get_icon(),
+        false => weather_icons::get_night_weather_icon(current.weather_code).get_icon(),
+    };
+
     draw_bmp(
         display,
-        weather_icons::get_weather_icon(current.weather_code).get_icon(),
+        &current_image,
         starting_point.x,
-        starting_point.y - 20,
+        starting_point.y - 15,
     );
 
     let mut formatting_buffer = [0u8; 520];
