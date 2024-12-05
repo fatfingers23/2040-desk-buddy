@@ -3,6 +3,7 @@
 #![feature(impl_trait_in_assoc_type)]
 
 use assign_resources::assign_resources;
+use bt_hci::cmd::info;
 use core::str::from_utf8;
 use cyw43::JoinOptions;
 use cyw43_driver::{net_task, setup_cyw43};
@@ -118,7 +119,9 @@ static WEB_REQUEST_EVENT_CHANNEL: channel::Channel<CriticalSectionRawMutex, WebR
 static GENERAL_EVENT_CHANNEL: channel::Channel<CriticalSectionRawMutex, GeneralEvents, 10> =
     channel::Channel::new();
 
-static CONSUMER_CHANNEL: channel::Channel<CriticalSectionRawMutex, State, 1> =
+//TODO i think having multiple things listening to the consumer channel is the mix up
+//Will come back later to see
+static CONSUMER_CHANNEL: channel::Channel<CriticalSectionRawMutex, State, 2> =
     channel::Channel::new();
 
 /// Signal for stopping the first random signal task. We use a signal here, because we need no queue. It is suffiient to have one signal active.
@@ -212,6 +215,7 @@ async fn rtc_task(_spawner: Spawner, rtc_peripheral: ClockPeripherals) {
     loop {
         //Wait for an event
         let state = receiver.receive().await;
+        info!("State received RTC: {:?}", state.state_change);
         match state.state_change {
             StateChanges::TimeSet => {
                 if let Some(time) = state.date_time_from_api {
@@ -303,7 +307,7 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
     loop {
         //TODO how do we decide what has changed?
         let state = receiver.receive().await;
-        info!("State received: {:?}", state.state_change);
+        info!("State received Display: {:?}", state.state_change);
         match state.state_change {
             StateChanges::None => {}
             StateChanges::ForecastUpdated => {
