@@ -3,6 +3,7 @@
 #![feature(impl_trait_in_assoc_type)]
 
 use assign_resources::assign_resources;
+use byte_slice_cast::AsSliceOf;
 use core::cell::RefCell;
 use cyw43::JoinOptions;
 use cyw43_driver::{net_task, setup_cyw43};
@@ -14,10 +15,9 @@ use embassy_futures::select::{select, Either};
 use embassy_net::dns::DnsSocket;
 use embassy_net::tcp::client::{TcpClient, TcpClientState};
 use embassy_net::{Config, StackResources};
-use embassy_rp::bind_interrupts;
 use embassy_rp::clocks::RoscRng;
 use embassy_rp::i2c::I2c;
-use embassy_rp::i2c::{self, InterruptHandler};
+use embassy_rp::i2c::{self};
 use embassy_rp::peripherals::{self, I2C0};
 use embassy_rp::rtc::{DateTime, DayOfWeek, RtcError};
 use embassy_rp::{
@@ -39,11 +39,15 @@ use epd_waveshare::{
 use heapless::{String, Vec};
 use io::easy_format_str;
 use rand::RngCore;
-use reqwless::client::{HttpClient, HttpConnection, TlsConfig, TlsVerify};
+use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
+use reqwless::request::{Request, RequestBody, RequestBuilder};
 use scd4x::types::SensorData;
 use scd4x::Scd4x;
 use static_cell::StaticCell;
-use web_requests::{get_web_request, ForecastResponse, TimeApiResponse};
+use web_requests::{
+    get_web_request, send_request, CreateSessionRequest, CreateSessionResponse, ForecastResponse,
+    TimeApiResponse,
+};
 use {defmt_rtt as _, panic_probe as _};
 
 mod cyw43_driver;
@@ -62,6 +66,7 @@ enum WebRequestEvents {
     UpdateForecast,
     UpdateOfficeStatus,
     GetTime,
+    CheckBlueSkyNotifications,
 }
 
 enum GeneralEvents {
@@ -666,6 +671,26 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
                     info!("sending time to rtc");
                     sender.send(GeneralEvents::TimeFromApi(rtc_time)).await;
                 }
+            }
+            WebRequestEvents::CheckBlueSkyNotifications => {
+                let mut rx_buffer = [0; 8320];
+                let pds = env_value("PDS");
+                let body = CreateSessionRequest {
+                    identifier: env_value("HANDLE"),
+                    password: env_value("PASSWORD"),
+                };
+
+                let create_session_request =
+                    Request::post("/xrpc/com.atproto.server.createSession")
+                        .content_type(reqwless::headers::ContentType::ApplicationJson)
+                        .body(body)
+                        .build();
+                let result = send_request::<CreateSessionRequest, CreateSessionResponse>(
+                    &mut http_client,
+                    pds,
+                    create_session_request,
+                    &mut rx_buffer,
+                );
             }
         }
     }

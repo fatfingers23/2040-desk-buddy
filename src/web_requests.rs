@@ -139,6 +139,19 @@ pub struct CreateSessionRequest<'a> {
     pub password: &'a str,
 }
 
+impl RequestBody for CreateSessionRequest<'_> {
+    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), W::Error> {
+        //TODO i think this can be done better
+        // let request_body: heapless::String<256> = serde_json_core::to_string(&self).unwrap();
+        // writer.write_all(request_body.as_bytes()).await?;
+        let mut buffer = [0u8; 256];
+        let bytes = serde_json_core::to_slice(&self, &mut buffer).unwrap();
+        writer.write_all(&buffer).await?;
+
+        Ok(())
+    }
+}
+
 ///BlueSky CreateSession Response
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionResponse<'a> {
