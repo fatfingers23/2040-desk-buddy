@@ -585,7 +585,7 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
         // let mut http_conn = HttpConnection::Tls(())
         match event {
             WebRequestEvents::UpdateForecast => {
-                let mut rx_buffer = [0; 8320];
+                let mut rx_buffer = [0; 8_320];
                 let lat = env_value("LAT");
                 let long = env_value("LON");
                 let unit = env_value("UNIT");
@@ -616,7 +616,7 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
                 //Call the office status update web request when implemented
             }
             WebRequestEvents::GetTime => {
-                let mut rx_buffer = [0; 8320];
+                let mut rx_buffer = [0; 8_320];
                 let timezone = env_value("TIMEZONE");
 
                 let mut url_buffer = [0u8; 1_028]; // im sure this can be much smaller
@@ -672,8 +672,8 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
                 }
             }
             WebRequestEvents::CheckBlueSkyNotifications => {
-                let mut rx_buffer = [0; 16_640];
-                let pds = env_value("PDS");
+                let mut rx_buffer = [0; 8_320];
+                let pds_host = env_value("PDS");
                 let body = CreateSessionRequest {
                     identifier: env_value("HANDLE"),
                     password: env_value("PASSWORD"),
@@ -681,23 +681,29 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
 
                 let create_session_request =
                     Request::post("/xrpc/com.atproto.server.createSession")
-                        .host("bsky.social")
+                        .host(pds_host)
                         .content_type(reqwless::headers::ContentType::ApplicationJson)
                         .body(body)
                         .build();
-                let result = send_request::<CreateSessionRequest, CreateSessionResponse>(
-                    &mut http_client,
-                    "https://bsky.social",
-                    create_session_request,
-                    &mut rx_buffer,
-                )
-                .await;
-                match result {
-                    Ok(response) => {
-                        info!("Bluesky session jwt: {:?}", response.access_jwt);
-                    }
-                    Err(e) => {
-                        error!("Failed to get session: {:?}", e);
+                let mut url_buffer = [0u8; 1_028];
+
+                if let Ok(formatted_base_url) =
+                    easy_format_str(format_args!("https://{}", pds_host), &mut url_buffer)
+                {
+                    let result = send_request::<CreateSessionRequest, CreateSessionResponse>(
+                        &mut http_client,
+                        formatted_base_url,
+                        create_session_request,
+                        &mut rx_buffer,
+                    )
+                    .await;
+                    match result {
+                        Ok(response) => {
+                            info!("Bluesky session jwt: {:?}", response.access_jwt);
+                        }
+                        Err(e) => {
+                            error!("Failed to get session: {:?}", e);
+                        }
                     }
                 }
             }

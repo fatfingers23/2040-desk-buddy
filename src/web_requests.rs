@@ -155,20 +155,22 @@ impl RequestBody for CreateSessionRequest<'_> {
 
 ///BlueSky CreateSession Response
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CreateSessionResponse<'a> {
     #[serde(rename = "accessJwt")]
     pub access_jwt: &'a str,
-    // pub refresh_jwt: &'a str,
-    // pub handle: &'a str,
-    // pub did: &'a str,
+    #[serde(rename = "refreshJwt")]
+    pub refresh_jwt: &'a str,
+    pub handle: &'a str,
+    pub did: &'a str,
     // //Not sur what this is
     // // pub did_doc: Option<serde_json::Value>,
-    // pub email: &'a str,
-    // pub email_confirmed: bool,
-    // pub email_auth_factor: bool,
-    // pub active: bool,
-    // pub status: &'a str,
+    pub email: &'a str,
+    #[serde(rename = "emailConfirmed")]
+    pub email_confirmed: bool,
+    #[serde(rename = "emailAuthFactor")]
+    pub email_auth_factor: bool,
+    pub active: bool,
+    pub status: &'a str,
 }
 
 #[derive(Debug, Format)]
