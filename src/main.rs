@@ -182,7 +182,6 @@ async fn main(spawner: Spawner) {
 
     let i2c = I2c::new_blocking(p.I2C0, p.PIN_21, p.PIN_20, i2c::Config::default());
     static I2C_BUS: StaticCell<I2c0Bus> = StaticCell::new();
-    // let i2c_bus = I2C_BUS.init(Mutex::new(i2c));
     let i2c_bus = NoopMutex::new(RefCell::new(i2c));
     let i2c_bus = I2C_BUS.init(i2c_bus);
 
@@ -673,7 +672,7 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
                 }
             }
             WebRequestEvents::CheckBlueSkyNotifications => {
-                let mut rx_buffer = [0; 8320];
+                let mut rx_buffer = [0; 16_640];
                 let pds = env_value("PDS");
                 let body = CreateSessionRequest {
                     identifier: env_value("HANDLE"),
@@ -682,15 +681,25 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
 
                 let create_session_request =
                     Request::post("/xrpc/com.atproto.server.createSession")
+                        .host("bsky.social")
                         .content_type(reqwless::headers::ContentType::ApplicationJson)
                         .body(body)
                         .build();
                 let result = send_request::<CreateSessionRequest, CreateSessionResponse>(
                     &mut http_client,
-                    pds,
+                    "https://bsky.social",
                     create_session_request,
                     &mut rx_buffer,
-                );
+                )
+                .await;
+                match result {
+                    Ok(response) => {
+                        info!("Bluesky session jwt: {:?}", response.access_jwt);
+                    }
+                    Err(e) => {
+                        error!("Failed to get session: {:?}", e);
+                    }
+                }
             }
         }
     }
@@ -702,11 +711,18 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
 async fn random_10s(_spawner: Spawner) {
     let sender = WEB_REQUEST_EVENT_CHANNEL.sender();
     Timer::after(Duration::from_secs(10)).await;
+    sender
+        .send(WebRequestEvents::CheckBlueSkyNotifications)
+        .await;
     info!("10s are up, calling time api");
     //Calls to get time from the an API
-    sender.send(WebRequestEvents::GetTime).await;
-    Timer::after(Duration::from_secs(30)).await;
-    sender.send(WebRequestEvents::UpdateForecast).await;
+    // sender.send(WebRequestEvents::GetTime).await;
+    // Timer::after(Duration::from_secs(30)).await;
+    // sender.send(WebRequestEvents::UpdateForecast).await;
+    // Timer::after(Duration::from_secs(30)).await;
+    // sender
+    //     .send(WebRequestEvents::CheckBlueSkyNotifications)
+    // .await;
 
     loop {
         // we either await on the timer or the signal, whichever comes first.
@@ -718,9 +734,7 @@ async fn random_10s(_spawner: Spawner) {
         match futures {
             Either::First(_) => {
                 // we received are operating on the timer
-                // info!("10s are up, calling forecast update");
                 // sender.send(WebRequestEvents::UpdateForecast).await;
-                sender.send(WebRequestEvents::UpdateForecast).await;
             }
             Either::Second(_) => {
                 // we received the signal to stop

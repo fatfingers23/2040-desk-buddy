@@ -78,6 +78,17 @@ pub fn draw_scd_data(
 
 ///Draw time
 pub fn draw_time(date_time: DateTime, display: &mut impl DrawTarget<Color = Color>) {
+    //Need to white out the time before drawing the new time. Differences in date size can leave one digit hanging
+    let rectangle_style = PrimitiveStyleBuilder::new()
+        .stroke_color(Color::White)
+        .stroke_width(1)
+        .fill_color(Color::White)
+        .build();
+
+    let _ = Rectangle::new(Point::new(0, 0), Size::new(155, 25))
+        .into_styled(rectangle_style)
+        .draw(display);
+
     let mut am = true;
     let twelve_hour = if date_time.hour >= 12 {
         am = false;
@@ -269,9 +280,9 @@ pub fn draw_weather_forecast_box(
     {
         draw_bmp(
             display,
-            include_bytes!("../images/birthday_cake.bmp"),
-            starting_point.x + 58,
-            starting_point.y + 6,
+            include_bytes!("../images/birthday_cake_24.bmp"),
+            starting_point.x + 54,
+            starting_point.y + 1,
         );
     }
 

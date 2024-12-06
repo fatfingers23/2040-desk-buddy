@@ -1,5 +1,4 @@
 use core::str::from_utf8;
-
 use defmt::Format;
 use defmt::*;
 use embassy_net::{dns::DnsSocket, tcp::client::TcpClient};
@@ -146,7 +145,9 @@ impl RequestBody for CreateSessionRequest<'_> {
         // writer.write_all(request_body.as_bytes()).await?;
         let mut buffer = [0u8; 256];
         let bytes = serde_json_core::to_slice(&self, &mut buffer).unwrap();
-        writer.write_all(&buffer).await?;
+        let only_used_bytes = &buffer[..bytes];
+        info!("Request Body: {}", from_utf8(&only_used_bytes).unwrap());
+        writer.write_all(&only_used_bytes).await?;
 
         Ok(())
     }
@@ -154,18 +155,20 @@ impl RequestBody for CreateSessionRequest<'_> {
 
 ///BlueSky CreateSession Response
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateSessionResponse<'a> {
+    #[serde(rename = "accessJwt")]
     pub access_jwt: &'a str,
-    pub refresh_jwt: &'a str,
-    pub handle: &'a str,
-    pub did: &'a str,
-    //Not sur what this is
-    // pub did_doc: Option<serde_json::Value>,
-    pub email: &'a str,
-    pub email_confirmed: bool,
-    pub email_auth_factor: bool,
-    pub active: bool,
-    pub status: &'a str,
+    // pub refresh_jwt: &'a str,
+    // pub handle: &'a str,
+    // pub did: &'a str,
+    // //Not sur what this is
+    // // pub did_doc: Option<serde_json::Value>,
+    // pub email: &'a str,
+    // pub email_confirmed: bool,
+    // pub email_auth_factor: bool,
+    // pub active: bool,
+    // pub status: &'a str,
 }
 
 #[derive(Debug, Format)]
@@ -174,7 +177,6 @@ pub enum WebCallError {
     WebRequestError,
     FailedToReadResponse,
     DeserializationError,
-    UrlFormatError,
 }
 
 pub async fn send_request<'a, T, ResponseType>(
@@ -194,6 +196,7 @@ where
             return Err(WebCallError::WebRequestError);
         }
     };
+
     let response = match conn.send(request, rx_buffer).await {
         Ok(req) => req,
         Err(e) => {
@@ -202,10 +205,29 @@ where
         }
     };
 
+    // info!("Response: {:?}", response.);
+
     if !response.status.is_successful() {
+        let status_code = response.status.0.clone();
         error!("HTTP request failed with status: {:?}", response.status);
-        return Err(WebCallError::HttpError(response.status.0));
+        // error!("Failed response: {}", response);
+        match from_utf8(response.body().read_to_end().await.unwrap()) {
+            Ok(body) => {
+                error!("Response body: {}", body);
+            }
+            Err(_e) => {
+                error!("Failed to read response body");
+            }
+        }
+
+        return Err(WebCallError::HttpError(status_code));
     }
+
+    // let body_str = from_utf8(response.body().read_to_end().await.unwrap()).unwrap();
+    // info!("Response body: {}", body_str);
+    // if body_str.is_empty() {
+    //     return Err(WebCallError::FailedToReadResponse);
+    // }
 
     let body = match from_utf8(response.body().read_to_end().await.unwrap()) {
         Ok(b) => b,
@@ -214,9 +236,14 @@ where
             return Err(WebCallError::FailedToReadResponse);
         }
     };
+
+    // info!("Response body: {}", body);
+    // Err(WebCallError::DeserializationError)
     match serde_json_core::de::from_slice::<ResponseType>(body.as_bytes()) {
         Ok((output, _used)) => Ok(output),
         Err(e) => {
+            info!("Here");
+            error!("Response body: {}", body);
             print_serde_json_error(e);
             return Err(WebCallError::DeserializationError);
         }
