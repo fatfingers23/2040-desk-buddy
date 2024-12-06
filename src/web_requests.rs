@@ -4,8 +4,11 @@ use defmt::Format;
 use defmt::*;
 use embassy_net::{dns::DnsSocket, tcp::client::TcpClient};
 use heapless::{String, Vec};
-use reqwless::{client::HttpClient, request::Method};
-use serde::Deserialize;
+use reqwless::{
+    client::{HttpClient, HttpConnection},
+    request::{self, Method, Request, RequestBody},
+};
+use serde::{Deserialize, Serialize};
 
 // https://api.open-meteo.com/v1/forecast?latitude=35.7512&longitude=-86.93&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit=fahrenheit&timezone=America/Chicago
 //Weather code meanings
@@ -129,6 +132,29 @@ pub struct TimeApiResponse<'a> {
     pub day_of_week: u8,
 }
 
+///Blyesky CreateSession Request
+#[derive(Serialize)]
+pub struct CreateSessionRequest<'a> {
+    pub identifier: &'a str,
+    pub password: &'a str,
+}
+
+///BlueSky CreateSession Response
+#[derive(Debug, Deserialize)]
+pub struct CreateSessionResponse<'a> {
+    pub access_jwt: &'a str,
+    pub refresh_jwt: &'a str,
+    pub handle: &'a str,
+    pub did: &'a str,
+    //Not sur what this is
+    // pub did_doc: Option<serde_json::Value>,
+    pub email: &'a str,
+    pub email_confirmed: bool,
+    pub email_auth_factor: bool,
+    pub active: bool,
+    pub status: &'a str,
+}
+
 #[derive(Debug, Format)]
 pub enum WebCallError {
     HttpError(u16),
@@ -136,6 +162,52 @@ pub enum WebCallError {
     FailedToReadResponse,
     DeserializationError,
     UrlFormatError,
+}
+
+pub async fn send_request<'a, T, ResponseType>(
+    http_client: &mut HttpClient<'a, TcpClient<'a, 4>, DnsSocket<'a>>,
+    base_url: &str,
+    request: Request<'a, T>,
+    rx_buffer: &'a mut [u8],
+) -> Result<ResponseType, WebCallError>
+where
+    T: RequestBody,
+    ResponseType: serde::Deserialize<'a>,
+{
+    let mut conn = match http_client.resource(base_url).await {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Failed to make HTTP request: {:?}", e);
+            return Err(WebCallError::WebRequestError);
+        }
+    };
+    let response = match conn.send(request, rx_buffer).await {
+        Ok(req) => req,
+        Err(e) => {
+            error!("Failed to make HTTP request: {:?}", e);
+            return Err(WebCallError::WebRequestError);
+        }
+    };
+
+    if !response.status.is_successful() {
+        error!("HTTP request failed with status: {:?}", response.status);
+        return Err(WebCallError::HttpError(response.status.0));
+    }
+
+    let body = match from_utf8(response.body().read_to_end().await.unwrap()) {
+        Ok(b) => b,
+        Err(_e) => {
+            error!("Failed to read response body");
+            return Err(WebCallError::FailedToReadResponse);
+        }
+    };
+    match serde_json_core::de::from_slice::<ResponseType>(body.as_bytes()) {
+        Ok((output, _used)) => Ok(output),
+        Err(e) => {
+            print_serde_json_error(e);
+            return Err(WebCallError::DeserializationError);
+        }
+    }
 }
 
 /// Wrapper to help you make a GET request that responses with JSON

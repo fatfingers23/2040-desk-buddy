@@ -39,7 +39,7 @@ use epd_waveshare::{
 use heapless::{String, Vec};
 use io::easy_format_str;
 use rand::RngCore;
-use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
+use reqwless::client::{HttpClient, HttpConnection, TlsConfig, TlsVerify};
 use scd4x::types::SensorData;
 use scd4x::Scd4x;
 use static_cell::StaticCell;
@@ -54,10 +54,6 @@ mod weather_icons;
 mod web_requests;
 
 type I2c0Bus = NoopMutex<RefCell<I2c<'static, I2C0, i2c::Blocking>>>;
-
-bind_interrupts!(struct Irqs {
-    I2C0_IRQ => InterruptHandler<I2C0>;
-});
 
 #[allow(dead_code)]
 #[derive(Debug, Format)]
@@ -348,19 +344,7 @@ async fn scd_task(_spawner: Spawner, i2c_bus: &'static I2c0Bus) {
     Timer::after(Duration::from_secs(5)).await;
     loop {
         let data = sensor.measurement().unwrap();
-        // if fahrenheit {
-        //     info!(
-        //         "CO2: {} ppm, Temperature: {}°F, Humidity: {}%",
-        //         data.co2,
-        //         data.temperature * 1.8 + 32.0,
-        //         data.humidity
-        //     );
-        // } else {
-        //     info!(
-        //         "CO2: {} ppm, Temperature: {}°C, Humidity: {}%",
-        //         data.co2, data.temperature, data.humidity
-        //     );
-        // }
+
         sender.send(GeneralEvents::SensorUpdate(data)).await;
         Timer::after(Duration::from_secs(30)).await;
     }
@@ -594,7 +578,7 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
         );
 
         let mut http_client = HttpClient::new_with_tls(&tcp_client, &dns_client, tls_config);
-
+        // let mut http_conn = HttpConnection::Tls(())
         match event {
             WebRequestEvents::UpdateForecast => {
                 let mut rx_buffer = [0; 8320];
