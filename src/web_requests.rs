@@ -128,7 +128,7 @@ where
         let mut buffer = [0u8; 8_320];
         let bytes = serde_json_core::to_slice(&self.body, &mut buffer).unwrap();
         let only_used_bytes = &buffer[..bytes];
-        info!("Request Body: {}", from_utf8(&only_used_bytes).unwrap());
+        // info!("Request Body: {}", from_utf8(&only_used_bytes).unwrap());
         writer.write_all(&only_used_bytes).await?;
 
         Ok(())
@@ -176,10 +176,10 @@ pub struct ListNotificationsResponse<'a> {
 pub struct Notification<'a> {
     // pub uri: &'a str,
     // pub cid: &'a str,
-    // pub author: Author<'a>,
+    pub author: Author<'a>,
     pub reason: &'a str,
-    // #[serde(rename = "reasonSubject")]
-    // pub reason_subject: Option<&'a str>,
+    #[serde(rename = "reasonSubject")]
+    pub reason_subject: Option<&'a str>,
     // pub record: serde_json::Value,
     // #[serde(rename = "isRead")]
     // pub is_read: bool,
@@ -190,17 +190,17 @@ pub struct Notification<'a> {
 
 #[derive(Debug, Deserialize)]
 pub struct Author<'a> {
-    pub did: &'a str,
+    // pub did: &'a str,
     pub handle: &'a str,
     #[serde(rename = "displayName")]
     pub display_name: &'a str,
-    pub description: &'a str,
-    pub avatar: &'a str,
+    // pub description: &'a str,
+    // pub avatar: &'a str,
     // pub associated: Associated,
-    #[serde(rename = "indexedAt")]
-    pub indexed_at: &'a str,
-    #[serde(rename = "createdAt")]
-    pub created_at: &'a str,
+    // #[serde(rename = "indexedAt")]
+    // pub indexed_at: &'a str,
+    // #[serde(rename = "createdAt")]
+    // pub created_at: &'a str,
     // pub viewer: Viewer,
     // pub labels: Vec<Label, 16>,
 }

@@ -8,7 +8,10 @@ use core::cell::RefCell;
 use cyw43::JoinOptions;
 use cyw43_driver::{net_task, setup_cyw43};
 use defmt::*;
-use display::{draw_current_outside_weather, draw_scd_data, draw_time, draw_weather_forecast_box};
+use display::{
+    draw_blue_sky_notification, draw_current_outside_weather, draw_scd_data, draw_time,
+    draw_weather_forecast_box, BlueSkyNotificationData, InsideSensorData,
+};
 use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_futures::select::{select, Either};
@@ -37,7 +40,7 @@ use epd_waveshare::{
     prelude::*,
 };
 use heapless::{String, Vec};
-use io::easy_format_str;
+use io::{easy_format, easy_format_str};
 use rand::RngCore;
 use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
 use reqwless::request::{Request, RequestBody, RequestBuilder};
@@ -75,6 +78,7 @@ enum GeneralEvents {
     //TODO also pass what was changed? Like hour, minute etc
     TimeDigitChanged(DateTime),
     SensorUpdate(SensorData),
+    BlueSkyNotificationUpdate(BlueSkyNotificationData),
 }
 
 //TODO need to go to each channel and event and log which is getting called when cause theres a wait happening somewhere
@@ -85,6 +89,7 @@ impl GeneralEvents {
             GeneralEvents::TimeFromApi(_) => "TimeFromApi",
             GeneralEvents::TimeDigitChanged(_) => "TimeDigitChanged",
             GeneralEvents::SensorUpdate(_) => "SensorUpdate",
+            GeneralEvents::BlueSkyNotificationUpdate(_) => "BlueSkyNotificationUpdate",
         }
     }
 }
@@ -97,14 +102,6 @@ enum Commands {
     Stop,
 }
 
-///Just a copy of SensorData to have debug, clone and format
-#[derive(Debug, Clone, Format)]
-pub struct InsideSensorData {
-    pub co2: u16,
-    pub temperature: f32,
-    pub humidity: f32,
-}
-
 #[allow(dead_code)]
 #[derive(Debug, Clone, Format)]
 enum StateChanges {
@@ -114,6 +111,7 @@ enum StateChanges {
     TimeSet,
     NewTimeDigit,
     SensorUpdate,
+    BlueSkyNotificationUpdate,
 }
 
 #[derive(Debug, Clone)]
@@ -122,6 +120,7 @@ struct State {
     date_time_from_api: Option<DateTime>,
     approximately_current_time: Option<DateTime>,
     sensor_data: Option<InsideSensorData>,
+    blue_sky_notification_data: Option<BlueSkyNotificationData>,
     state_change: StateChanges,
 }
 
@@ -132,6 +131,7 @@ impl State {
             date_time_from_api: None,
             approximately_current_time: None,
             sensor_data: None,
+            blue_sky_notification_data: None,
             state_change: StateChanges::None,
         }
     }
@@ -243,6 +243,10 @@ async fn orchestrate(_spawner: Spawner) {
                     humidity: sensor_data.humidity,
                 });
                 state.state_change = StateChanges::SensorUpdate;
+            }
+            GeneralEvents::BlueSkyNotificationUpdate(notification_data) => {
+                state.blue_sky_notification_data = Some(notification_data);
+                state.state_change = StateChanges::BlueSkyNotificationUpdate;
             }
         }
         info!("State change: {:?}", state.state_change);
@@ -488,6 +492,18 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                 //TODO not updating the display and just let another like digit change update it
                 if let Some(sensor_data) = state.sensor_data {
                     draw_scd_data(Point::new(5, 50), sensor_data, &mut display);
+                }
+            }
+            StateChanges::BlueSkyNotificationUpdate => {
+                if let Some(notification_data) = state.blue_sky_notification_data {
+                    draw_blue_sky_notification(Point::new(160, 0), notification_data, &mut display);
+                    let _ = epd4in2.wake_up(&mut spi_dev, &mut Delay);
+                    let _ = epd4in2.update_and_display_frame(
+                        &mut spi_dev,
+                        display.buffer(),
+                        &mut Delay,
+                    );
+                    epd4in2.sleep(&mut spi_dev, &mut Delay).unwrap();
                 }
             }
         }
@@ -742,7 +758,7 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
                             .content_type(reqwless::headers::ContentType::ApplicationJson)
                             .build();
 
-                    let result = send_request::<(), GetUnreadCountResponse>(
+                    let unread_count = send_request::<(), GetUnreadCountResponse>(
                         &mut http_client,
                         formatted_base_url,
                         get_notification_count_request,
@@ -750,9 +766,9 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
                     )
                     .await;
 
-                    if let Ok(response) = result {
-                        info!("Unread count: {}", response.count);
-                    }
+                    // if let Ok(response) = unread_count {
+                    //     info!("Unread count: {}", response.count);
+                    // }
                     let mut rx_buffer = [0; 8_320];
 
                     let get_notification_count_request =
@@ -770,8 +786,42 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
                     )
                     .await;
 
+                    // let mut last_notification_string = String::<256>::new();
                     if let Ok(response) = result {
-                        info!("Unread count: {}", response.notifications[0].reason);
+                        // let _ =
+                        //     last_notification_string.push_str(&response.notifications[0].reason);
+                        // info!(
+                        //     "debug: {:?} {:?}",
+                        //     last_notification_string, response.notifications[0].reason
+                        // );
+
+                        let last_notification_blur = match response.notifications[0].reason {
+                            "like" => "\nhas liked your post",
+                            "repost" => " has reposted your post",
+                            "follow" => " has followed you",
+                            "mention" => " has mentioned you",
+                            "reply" => " has replied to you",
+                            "quote" => " has quoted you",
+                            _ => " Not sure what happened here",
+                        };
+
+                        info!(
+                            "Last notification: {}{}",
+                            response.notifications[0].author.handle, last_notification_blur
+                        );
+                        let last_notification_string = easy_format(format_args!(
+                            "{}{}",
+                            response.notifications[0].author.handle, last_notification_blur
+                        ));
+
+                        sender
+                            .send(GeneralEvents::BlueSkyNotificationUpdate(
+                                BlueSkyNotificationData {
+                                    unread_notifications: unread_count.unwrap().count,
+                                    last_notification: last_notification_string,
+                                },
+                            ))
+                            .await;
                     }
                 }
             }
@@ -785,19 +835,16 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
 async fn random_10s(_spawner: Spawner) {
     let sender = WEB_REQUEST_EVENT_CHANNEL.sender();
     Timer::after(Duration::from_secs(10)).await;
+    sender.send(WebRequestEvents::GetTime).await;
+    //Calls to get time from the an API
+
+    Timer::after(Duration::from_secs(30)).await;
+    sender.send(WebRequestEvents::UpdateForecast).await;
+
+    Timer::after(Duration::from_secs(10)).await;
     sender
         .send(WebRequestEvents::CheckBlueSkyNotifications)
         .await;
-    info!("10s are up, calling time api");
-    //Calls to get time from the an API
-
-    // sender.send(WebRequestEvents::GetTime).await;
-    // Timer::after(Duration::from_secs(30)).await;
-    // sender.send(WebRequestEvents::UpdateForecast).await;
-    // Timer::after(Duration::from_secs(30)).await;
-    // sender
-    //     .send(WebRequestEvents::CheckBlueSkyNotifications)
-    //     .await;
 
     loop {
         // we either await on the timer or the signal, whichever comes first.

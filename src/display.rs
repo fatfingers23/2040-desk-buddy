@@ -1,7 +1,7 @@
 use crate::env::env_value;
 use crate::io::easy_format_str;
+use crate::weather_icons;
 use crate::web_requests::{Current, CurrentUnits};
-use crate::{weather_icons, InsideSensorData};
 use defmt::*;
 use embassy_rp::rtc::DateTime;
 use embedded_graphics::mono_font::MonoFont;
@@ -18,6 +18,70 @@ use heapless::{String, Vec};
 use libm::{floor, roundf};
 use tinybmp::Bmp;
 
+//Some display models
+
+///Just a copy of SensorData to have debug, clone and format
+#[derive(Debug, Clone, Format)]
+pub struct InsideSensorData {
+    pub co2: u16,
+    pub temperature: f32,
+    pub humidity: f32,
+}
+
+#[derive(Debug, Clone, Format)]
+pub struct BlueSkyNotificationData {
+    pub unread_notifications: i32,
+    pub last_notification: String<256>,
+}
+
+//The draw functions
+
+pub fn draw_blue_sky_notification(
+    starting_point: Point,
+    notification: BlueSkyNotificationData,
+    display: &mut impl DrawTarget<Color = Color>,
+) {
+    // let notification_box_style = PrimitiveStyleBuilder::new()
+    //     .stroke_color(Color::Black)
+    //     .stroke_width(1)
+    //     .fill_color(Color::White)
+    //     .build();
+
+    // let _ = Rectangle::new(starting_point, Size::new(200, 25))
+    //     .into_styled(notification_box_style)
+    //     .draw(display);
+
+    draw_bmp(
+        display,
+        include_bytes!("../images/bluesky_logo.bmp"),
+        starting_point.x + 10,
+        starting_point.y,
+    );
+
+    let mut formatting_buffer = [0u8; 10];
+    let unread_notifications = easy_format_str(
+        format_args!("{}", notification.unread_notifications),
+        &mut formatting_buffer,
+    );
+
+    //Unread count
+    draw_text(
+        display,
+        unread_notifications.unwrap(),
+        starting_point.x + 40,
+        starting_point.y + 0,
+    );
+
+    //Last notification
+    draw_text(
+        display,
+        &notification.last_notification.as_str(),
+        starting_point.x + 40,
+        starting_point.y + 10,
+    );
+}
+
+///Draws the inside sensor data from the scd40 sensor
 pub fn draw_scd_data(
     starting_point: Point,
     sensor_data: InsideSensorData,
