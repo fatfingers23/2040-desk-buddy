@@ -46,7 +46,7 @@ use scd4x::Scd4x;
 use static_cell::StaticCell;
 use web_requests::{
     get_web_request, send_request, CreateSessionRequest, CreateSessionResponse, ForecastResponse,
-    TimeApiResponse,
+    GetUnreadCountResponse, ListNotificationsResponse, TimeApiResponse, WebRequestBody,
 };
 use {defmt_rtt as _, panic_probe as _};
 
@@ -310,6 +310,7 @@ async fn rtc_task(_spawner: Spawner, rtc_peripheral: ClockPeripherals) {
     }
 }
 
+//HACK probably a better way to print this
 fn print_rtc_error(e: RtcError) {
     match e {
         embassy_rp::rtc::RtcError::NotRunning => {
@@ -672,11 +673,19 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
                 }
             }
             WebRequestEvents::CheckBlueSkyNotifications => {
+                //TODO Write a better implementation probably a "diet" blue sky client. This is just for POC
+                //But do not need to be getting a new JWT for every call. Probably should be saving to flash
+                //Then refreshing
+
+                //Also just whole thing can be cleaned up
                 let mut rx_buffer = [0; 8_320];
-                let pds_host = env_value("PDS");
-                let body = CreateSessionRequest {
-                    identifier: env_value("HANDLE"),
-                    password: env_value("PASSWORD"),
+                let pds_host = env_value("PDS_HOST");
+
+                let body = WebRequestBody {
+                    body: &CreateSessionRequest {
+                        identifier: env_value("HANDLE"),
+                        password: env_value("PASSWORD"),
+                    },
                 };
 
                 let create_session_request =
@@ -686,24 +695,83 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
                         .body(body)
                         .build();
                 let mut url_buffer = [0u8; 1_028];
+                let mut formatting_jwt_buffer = [0u8; 1_028];
+                let mut possible_jwt: Option<&str> = None;
+                let attempted_url_format =
+                    easy_format_str(format_args!("https://{}", pds_host), &mut url_buffer);
+                if let Err(e) = attempted_url_format {
+                    error!("Failed to format url");
+                    continue;
+                }
+                let formatted_base_url = attempted_url_format.unwrap();
 
-                if let Ok(formatted_base_url) =
-                    easy_format_str(format_args!("https://{}", pds_host), &mut url_buffer)
-                {
-                    let result = send_request::<CreateSessionRequest, CreateSessionResponse>(
+                let result =
+                    send_request::<WebRequestBody<CreateSessionRequest>, CreateSessionResponse>(
                         &mut http_client,
                         formatted_base_url,
                         create_session_request,
                         &mut rx_buffer,
                     )
                     .await;
-                    match result {
-                        Ok(response) => {
-                            info!("Bluesky session jwt: {:?}", response.access_jwt);
+                match result {
+                    Ok(response) => {
+                        let formatted_jwt = easy_format_str(
+                            format_args!("Bearer {}", response.access_jwt),
+                            &mut formatting_jwt_buffer,
+                        );
+                        if let Ok(jwt) = formatted_jwt {
+                            possible_jwt = Some(jwt);
                         }
-                        Err(e) => {
-                            error!("Failed to get session: {:?}", e);
-                        }
+
+                        // info!("Bluesky session jwt: {:?}", response.access_jwt);
+                    }
+                    Err(e) => {
+                        error!("Failed to get session: {:?}", e);
+                    }
+                }
+
+                if let Some(jwt) = possible_jwt {
+                    let auth_headers = [("Authorization", jwt)];
+
+                    let mut rx_buffer = [0; 8_320];
+
+                    let get_notification_count_request =
+                        Request::get("/xrpc/app.bsky.notification.getUnreadCount")
+                            .headers(&auth_headers)
+                            .host(pds_host)
+                            .content_type(reqwless::headers::ContentType::ApplicationJson)
+                            .build();
+
+                    let result = send_request::<(), GetUnreadCountResponse>(
+                        &mut http_client,
+                        formatted_base_url,
+                        get_notification_count_request,
+                        &mut rx_buffer,
+                    )
+                    .await;
+
+                    if let Ok(response) = result {
+                        info!("Unread count: {}", response.count);
+                    }
+                    let mut rx_buffer = [0; 8_320];
+
+                    let get_notification_count_request =
+                        Request::get("/xrpc/app.bsky.notification.listNotifications?limit=1")
+                            .headers(&auth_headers)
+                            .host(pds_host)
+                            .content_type(reqwless::headers::ContentType::ApplicationJson)
+                            .build();
+
+                    let result = send_request::<(), ListNotificationsResponse>(
+                        &mut http_client,
+                        formatted_base_url,
+                        get_notification_count_request,
+                        &mut rx_buffer,
+                    )
+                    .await;
+
+                    if let Ok(response) = result {
+                        info!("Unread count: {}", response.notifications[0].reason);
                     }
                 }
             }
@@ -722,13 +790,14 @@ async fn random_10s(_spawner: Spawner) {
         .await;
     info!("10s are up, calling time api");
     //Calls to get time from the an API
+
     // sender.send(WebRequestEvents::GetTime).await;
     // Timer::after(Duration::from_secs(30)).await;
     // sender.send(WebRequestEvents::UpdateForecast).await;
     // Timer::after(Duration::from_secs(30)).await;
     // sender
     //     .send(WebRequestEvents::CheckBlueSkyNotifications)
-    // .await;
+    //     .await;
 
     loop {
         // we either await on the timer or the signal, whichever comes first.

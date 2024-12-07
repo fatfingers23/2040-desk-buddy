@@ -31,35 +31,26 @@ use serde::{Deserialize, Serialize};
 /// You will notice I am using heapless::String instead of &str. I was having issues with sharing the struct between tasks
 /// because of str and decided to just go simple to keep moving
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ForecastResponse {
     pub latitude: f64,
     pub longitude: f64,
-    #[serde(rename = "generationtime_ms")]
     pub generationtime_ms: f64,
-    #[serde(rename = "utc_offset_seconds")]
     pub utc_offset_seconds: i64,
     pub timezone: String<32>,
-    #[serde(rename = "timezone_abbreviation")]
     pub timezone_abbreviation: String<8>,
     pub elevation: f64,
-    #[serde(rename = "current_units")]
     pub current_units: CurrentUnits,
     pub current: Current,
-    #[serde(rename = "daily_units")]
     pub daily_units: DailyUnits,
     pub daily: Daily,
 }
 
 ///This is the units used for each of the current measurements
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CurrentUnits {
     pub time: String<7>,
     pub interval: String<7>,
-    #[serde(rename = "temperature_2m")]
     pub temperature_2m: String<3>,
-    #[serde(rename = "relative_humidity_2m")]
     pub relative_humidity_2m: String<2>,
     //I think this will always be wmo code. Going to assume it is
     // #[serde(rename = "weather_code")]
@@ -67,41 +58,31 @@ pub struct CurrentUnits {
 }
 ///This is the actual current weather measurements
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Current {
     pub time: String<16>,
     pub interval: i64,
-    #[serde(rename = "temperature_2m")]
     pub temperature_2m: f64,
-    #[serde(rename = "relative_humidity_2m")]
     pub relative_humidity_2m: i64,
-    ///See top for weather code meanings
-    #[serde(rename = "weather_code")]
+    ///See top for weather code meanings    
     pub weather_code: u8,
 }
 
 ///This is the units used for each of the daily measurements
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct DailyUnits {
     pub time: String<7>,
     //I think this will always be wmo code. Going to assume it is
-    // #[serde(rename = "weather_code")]
     // pub weather_code: &'a str,
-    #[serde(rename = "temperature_2m_max")]
     pub temperature_2m_max: String<3>,
-    #[serde(rename = "temperature_2m_min")]
     pub temperature_2m_min: String<3>,
     //Just going to comment these out cause it's all just going to use the same time format
     // pub sunrise: &'a str,
     // pub sunset: &'a str,
-    #[serde(rename = "precipitation_probability_max")]
     pub precipitation_probability_max: String<1>,
 }
 
 ///This is the actual daily weather measurements
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
 //Hack
 //I know the vecs will always be 7(for my use case) since i get 7 week forecast
 //I know the Strings length will always be 10 or 16 because it's dates
@@ -109,18 +90,14 @@ pub struct DailyUnits {
 pub struct Daily {
     // "2024-11-29",
     pub time: Vec<String<10>, 7>,
-    ///See top for weather code meanings
-    #[serde(rename = "weather_code")]
+    ///See top for weather code meanings    
     pub weather_code: Vec<u8, 7>,
-    #[serde(rename = "temperature_2m_max")]
     pub temperature_2m_max: Vec<f64, 7>,
-    #[serde(rename = "temperature_2m_min")]
     pub temperature_2m_min: Vec<f64, 7>,
     // 2024-11-29T06:37
     pub sunrise: Vec<String<16>, 7>,
     // 2024-11-29T06:37
     pub sunset: Vec<String<16>, 7>,
-    #[serde(rename = "precipitation_probability_max")]
     pub precipitation_probability_max: Vec<i64, 7>,
 }
 
@@ -138,13 +115,18 @@ pub struct CreateSessionRequest<'a> {
     pub password: &'a str,
 }
 
-impl RequestBody for CreateSessionRequest<'_> {
+#[derive(Serialize)]
+pub struct WebRequestBody<'a, T> {
+    pub body: &'a T,
+}
+
+impl<T> RequestBody for WebRequestBody<'_, T>
+where
+    T: for<'a> serde::Serialize,
+{
     async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), W::Error> {
-        //TODO i think this can be done better
-        // let request_body: heapless::String<256> = serde_json_core::to_string(&self).unwrap();
-        // writer.write_all(request_body.as_bytes()).await?;
-        let mut buffer = [0u8; 256];
-        let bytes = serde_json_core::to_slice(&self, &mut buffer).unwrap();
+        let mut buffer = [0u8; 8_320];
+        let bytes = serde_json_core::to_slice(&self.body, &mut buffer).unwrap();
         let only_used_bytes = &buffer[..bytes];
         info!("Request Body: {}", from_utf8(&only_used_bytes).unwrap());
         writer.write_all(&only_used_bytes).await?;
@@ -154,6 +136,7 @@ impl RequestBody for CreateSessionRequest<'_> {
 }
 
 ///BlueSky CreateSession Response
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionResponse<'a> {
     #[serde(rename = "accessJwt")]
@@ -162,15 +145,64 @@ pub struct CreateSessionResponse<'a> {
     pub refresh_jwt: &'a str,
     pub handle: &'a str,
     pub did: &'a str,
-    // //Not sur what this is
-    // // pub did_doc: Option<serde_json::Value>,
+    // // //Not sure what this is
+    // // // pub did_doc: Option<serde_json::Value>,
     pub email: &'a str,
     #[serde(rename = "emailConfirmed")]
     pub email_confirmed: bool,
     #[serde(rename = "emailAuthFactor")]
     pub email_auth_factor: bool,
     pub active: bool,
-    pub status: &'a str,
+    pub status: Option<&'a str>,
+}
+
+///BlueSky notification count Response
+#[derive(Debug, Deserialize)]
+pub struct GetUnreadCountResponse {
+    pub count: i32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListNotificationsResponse<'a> {
+    // pub cursor: &'a str,
+    //This is hard coded for now
+    pub notifications: Vec<Notification<'a>, 1>,
+    // pub priority: bool,
+    #[serde(rename = "seenAt")]
+    pub seen_at: &'a str,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Notification<'a> {
+    // pub uri: &'a str,
+    // pub cid: &'a str,
+    // pub author: Author<'a>,
+    pub reason: &'a str,
+    // #[serde(rename = "reasonSubject")]
+    // pub reason_subject: Option<&'a str>,
+    // pub record: serde_json::Value,
+    // #[serde(rename = "isRead")]
+    // pub is_read: bool,
+    // #[serde(rename = "indexedAt")]
+    // pub indexed_at: &'a str,
+    // pub labels: Vec<Label, 16>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Author<'a> {
+    pub did: &'a str,
+    pub handle: &'a str,
+    #[serde(rename = "displayName")]
+    pub display_name: &'a str,
+    pub description: &'a str,
+    pub avatar: &'a str,
+    // pub associated: Associated,
+    #[serde(rename = "indexedAt")]
+    pub indexed_at: &'a str,
+    #[serde(rename = "createdAt")]
+    pub created_at: &'a str,
+    // pub viewer: Viewer,
+    // pub labels: Vec<Label, 16>,
 }
 
 #[derive(Debug, Format)]
@@ -180,6 +212,8 @@ pub enum WebCallError {
     FailedToReadResponse,
     DeserializationError,
 }
+
+//TODO the web requests all share a lot of the same code and could be refactored to have a common deserialization function for responses and handling
 
 pub async fn send_request<'a, T, ResponseType>(
     http_client: &mut HttpClient<'a, TcpClient<'a, 4>, DnsSocket<'a>>,
@@ -207,8 +241,6 @@ where
         }
     };
 
-    // info!("Response: {:?}", response.);
-
     if !response.status.is_successful() {
         let status_code = response.status.0.clone();
         error!("HTTP request failed with status: {:?}", response.status);
@@ -225,12 +257,6 @@ where
         return Err(WebCallError::HttpError(status_code));
     }
 
-    // let body_str = from_utf8(response.body().read_to_end().await.unwrap()).unwrap();
-    // info!("Response body: {}", body_str);
-    // if body_str.is_empty() {
-    //     return Err(WebCallError::FailedToReadResponse);
-    // }
-
     let body = match from_utf8(response.body().read_to_end().await.unwrap()) {
         Ok(b) => b,
         Err(_e) => {
@@ -239,12 +265,9 @@ where
         }
     };
 
-    // info!("Response body: {}", body);
-    // Err(WebCallError::DeserializationError)
     match serde_json_core::de::from_slice::<ResponseType>(body.as_bytes()) {
         Ok((output, _used)) => Ok(output),
         Err(e) => {
-            info!("Here");
             error!("Response body: {}", body);
             print_serde_json_error(e);
             return Err(WebCallError::DeserializationError);
@@ -298,6 +321,7 @@ where
     }
 }
 
+//HACK probably a better way to print this
 fn print_serde_json_error(error: serde_json_core::de::Error) {
     match error {
         serde_json_core::de::Error::AnyIsUnsupported => {
