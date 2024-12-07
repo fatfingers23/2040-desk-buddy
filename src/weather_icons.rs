@@ -186,6 +186,7 @@ impl WeatherIcon {
 }
 
 pub fn get_weather_icon(code: u8) -> WeatherIcon {
+    //TODO pretty sure these need adjusting
     match code {
         0 => WeatherIcon::Clear,
         1 => WeatherIcon::PartlyCloudy,

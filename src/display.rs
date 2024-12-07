@@ -41,16 +41,6 @@ pub fn draw_blue_sky_notification(
     notification: BlueSkyNotificationData,
     display: &mut impl DrawTarget<Color = Color>,
 ) {
-    // let notification_box_style = PrimitiveStyleBuilder::new()
-    //     .stroke_color(Color::Black)
-    //     .stroke_width(1)
-    //     .fill_color(Color::White)
-    //     .build();
-
-    // let _ = Rectangle::new(starting_point, Size::new(200, 25))
-    //     .into_styled(notification_box_style)
-    //     .draw(display);
-
     draw_bmp(
         display,
         include_bytes!("../images/bluesky_logo.bmp"),
@@ -111,14 +101,14 @@ pub fn draw_scd_data(
         format_args!("{}ppm", sensor_data.co2),
         &mut formatting_buffer,
     );
-    // (5,50)
+
     draw_bmp(
         display,
         include_bytes!("../images/house_fill.bmp"),
         starting_point.x,
         starting_point.y,
     );
-    // draw_text(display, temp.unwrap(), 38, 50);
+
     draw_text(
         display,
         temp.unwrap(),
@@ -189,20 +179,9 @@ pub fn draw_current_outside_weather(
     daytime: bool,
     display: &mut impl DrawTarget<Color = Color>,
 ) {
-    //Place holders to help with design
-    // let current_box_style = PrimitiveStyleBuilder::new()
-    //     .stroke_color(Color::Black)
-    //     .stroke_width(1)
-    //     .fill_color(Color::White)
-    //     .build();
-
-    // let _ = Rectangle::new(starting_point, Size::new(100, 100))
-    //     .into_styled(current_box_style)
-    //     .draw(display);
-    // let current_weather_starting_point = Point::new(300, 45);
-
     let current_image = match daytime {
         true => weather_icons::get_weather_icon(current.weather_code).get_icon(),
+        //TODO add more of night icons cause I think its just clear atm
         false => weather_icons::get_night_weather_icon(current.weather_code).get_icon(),
     };
 
@@ -259,6 +238,7 @@ pub fn draw_weather_forecast_box(
 ) {
     //TODO need to see about measure icons placement from bottom not top
     //This is about how some weather icons are taller than others
+    //Updated note 12-06 I think it's fine?
     let daily_max_rounded = floor(daily_max_temp);
     let daily_min_rounded = floor(daily_min_temp);
 
@@ -305,8 +285,6 @@ pub fn draw_weather_forecast_box(
         easy_format_str(format_args!("{}/{}", month, day), &mut formatting_buffer).unwrap();
 
     if let Some(current_datetime) = possible_current_datetime {
-        //TODO do the acutal logic to get the day of the week
-
         let mut day_of_week_index = current_datetime.day_of_week as u8 + current_index;
         if day_of_week_index > 6 {
             day_of_week_index = day_of_week_index - 7;
@@ -330,7 +308,6 @@ pub fn draw_weather_forecast_box(
             starting_point.y + 6,
         );
     } else {
-        //TODO Index loops over need to if it goes over 6 to reset to 0
         draw_text(
             display,
             month_day,

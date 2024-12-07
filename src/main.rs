@@ -3,7 +3,6 @@
 #![feature(impl_trait_in_assoc_type)]
 
 use assign_resources::assign_resources;
-use byte_slice_cast::AsSliceOf;
 use core::cell::RefCell;
 use cyw43::JoinOptions;
 use cyw43_driver::{net_task, setup_cyw43};
@@ -43,7 +42,7 @@ use heapless::{String, Vec};
 use io::{easy_format, easy_format_str};
 use rand::RngCore;
 use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
-use reqwless::request::{Request, RequestBody, RequestBuilder};
+use reqwless::request::{Request, RequestBuilder};
 use scd4x::types::SensorData;
 use scd4x::Scd4x;
 use static_cell::StaticCell;
@@ -81,7 +80,6 @@ enum GeneralEvents {
     BlueSkyNotificationUpdate(BlueSkyNotificationData),
 }
 
-//TODO need to go to each channel and event and log which is getting called when cause theres a wait happening somewhere
 impl GeneralEvents {
     fn as_str(&self) -> &str {
         match self {
@@ -94,8 +92,7 @@ impl GeneralEvents {
     }
 }
 
-/// This is the type of Commands that we will send from the orchestrating task to the worker tasks.
-/// Note that we are lazy here and only have one command, you might want to have more.
+///TODO not used currently but from the example
 #[allow(dead_code)]
 enum Commands {
     /// This command will stop the appropriate worker task
@@ -137,14 +134,14 @@ impl State {
     }
 }
 
+///Channel to tell the wirless_task to make this web request
 static WEB_REQUEST_EVENT_CHANNEL: channel::Channel<CriticalSectionRawMutex, WebRequestEvents, 10> =
     channel::Channel::new();
 
+///Events for orchestrate to react to and update state
 static GENERAL_EVENT_CHANNEL: channel::Channel<CriticalSectionRawMutex, GeneralEvents, 10> =
     channel::Channel::new();
 
-//TODO i think having multiple things listening to the consumer channel is the mix up
-//Will come back later to see. Looks like that is it
 static CONSUMER_CHANNEL: channel::Channel<CriticalSectionRawMutex, State, 1> =
     channel::Channel::new();
 
@@ -192,7 +189,7 @@ async fn main(spawner: Spawner) {
     spawner.must_spawn(rtc_task(spawner, r.rtc));
     spawner.must_spawn(scd_task(spawner, i2c_bus));
 
-    //Timings tasks?
+    //Timings tasks? Poc but plan on having like 1min, 5min, 24hr, etc
     spawner.must_spawn(random_10s(spawner));
 
     //Display task
@@ -202,7 +199,7 @@ async fn main(spawner: Spawner) {
     spawner.must_spawn(display_task(r.display_peripherals));
 
     loop {
-        info!("I'm still alive");
+        debug!("I'm still alive");
         Timer::after(Duration::from_secs(300)).await;
     }
 }
@@ -211,10 +208,7 @@ async fn main(spawner: Spawner) {
 async fn orchestrate(_spawner: Spawner) {
     let mut state = State::new();
 
-    // we need to have a receiver for the events
     let receiver = GENERAL_EVENT_CHANNEL.receiver();
-
-    // and we need a sender for the consumer task
     let state_sender = CONSUMER_CHANNEL.sender();
 
     loop {
@@ -262,8 +256,7 @@ async fn rtc_task(_spawner: Spawner, rtc_peripheral: ClockPeripherals) {
     let sender = GENERAL_EVENT_CHANNEL.sender();
 
     loop {
-        //Wait for an event
-        //TODO this task does not always bail after time is set may need to do the task or thing and send another set event?
+        //TODO This task needs to break before the display starts listening to the same channel so currently just have a 30sec delay before display init
         let state = receiver.receive().await;
         info!("State received RTC: {:?}", state.state_change);
         match state.state_change {
@@ -288,7 +281,6 @@ async fn rtc_task(_spawner: Spawner, rtc_peripheral: ClockPeripherals) {
 
             _ => {}
         }
-        // state_sender.send(state.clone()).await;
     }
 
     let mut hour = 0;
@@ -339,7 +331,6 @@ fn print_rtc_error(e: RtcError) {
 
 #[embassy_executor::task]
 async fn scd_task(_spawner: Spawner, i2c_bus: &'static I2c0Bus) {
-    // let fahrenheit = env_value("UNIT") == "fahrenheit";
     let sender = GENERAL_EVENT_CHANNEL.sender();
 
     let i2c_dev = I2cDevice::new(i2c_bus);
@@ -390,9 +381,7 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
 
     let receiver = CONSUMER_CHANNEL.receiver();
 
-    // let sender = EVENT_CHANNEL.sender();
     loop {
-        //TODO how do we decide what has changed?
         let state = receiver.receive().await;
         info!("State received Display: {:?}", state.state_change);
         match state.state_change {
@@ -426,7 +415,6 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                             *daily_weather_code,
                             sunrise.clone(),
                             sunset.clone(),
-                            //TODO prob change to the updated datetime
                             state.date_time_from_api.clone(),
                             i as u8,
                             &mut display,
@@ -464,7 +452,6 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                         daytime,
                         &mut display,
                     );
-                    //Do not need to wake up till right before I write since display is just handled on the RP2040
                     let _ = epd4in2.wake_up(&mut spi_dev, &mut Delay);
                     let _ = epd4in2.update_and_display_frame(
                         &mut spi_dev,
@@ -497,6 +484,7 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
             StateChanges::BlueSkyNotificationUpdate => {
                 if let Some(notification_data) = state.blue_sky_notification_data {
                     draw_blue_sky_notification(Point::new(160, 0), notification_data, &mut display);
+                    //TODO when this is a timer task just let the new digit update the display
                     let _ = epd4in2.wake_up(&mut spi_dev, &mut Delay);
                     let _ = epd4in2.update_and_display_frame(
                         &mut spi_dev,
@@ -575,8 +563,6 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
     //Turns LED on so I know it's connected and ready
     control.gpio_set(0, true).await;
 
-    //TODO do this like orchestrate task where it listens for a method like "update weather", "update office status", etc
-    // we need to have a receiver for the events
     let receiver = WEB_REQUEST_EVENT_CHANNEL.receiver();
     let sender = GENERAL_EVENT_CHANNEL.sender();
 
@@ -651,7 +637,7 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
                 .await;
 
                 if let Ok(response) = result {
-                    //TODO need to hide this away
+                    //TODO need to hide this away in a method that returns a datetime from a string
                     //Hell is empty and all the odd string manipulation code is here
                     let datetime = response.datetime.split('T').collect::<Vec<&str, 2>>();
                     //split at -
@@ -715,7 +701,7 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
                 let mut possible_jwt: Option<&str> = None;
                 let attempted_url_format =
                     easy_format_str(format_args!("https://{}", pds_host), &mut url_buffer);
-                if let Err(e) = attempted_url_format {
+                if let Err(_e) = attempted_url_format {
                     error!("Failed to format url");
                     continue;
                 }
@@ -738,8 +724,6 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
                         if let Ok(jwt) = formatted_jwt {
                             possible_jwt = Some(jwt);
                         }
-
-                        // info!("Bluesky session jwt: {:?}", response.access_jwt);
                     }
                     Err(e) => {
                         error!("Failed to get session: {:?}", e);
@@ -786,15 +770,7 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
                     )
                     .await;
 
-                    // let mut last_notification_string = String::<256>::new();
                     if let Ok(response) = result {
-                        // let _ =
-                        //     last_notification_string.push_str(&response.notifications[0].reason);
-                        // info!(
-                        //     "debug: {:?} {:?}",
-                        //     last_notification_string, response.notifications[0].reason
-                        // );
-
                         let last_notification_blur = match response.notifications[0].reason {
                             "like" => "\nhas liked your post",
                             "repost" => " has reposted your post",
@@ -807,8 +783,10 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
 
                         info!(
                             "Last notification: {}{}",
-                            response.notifications[0].author.handle, last_notification_blur
+                            response.notifications[0].author.display_name, last_notification_blur
                         );
+                        //TODO expected display name to have a value like I'm Bailey Townsend, but my handle is baileytownsend.dev
+                        //Will do some curls later and see whats up
                         let last_notification_string = easy_format(format_args!(
                             "{}{}",
                             response.notifications[0].author.handle, last_notification_blur
@@ -831,12 +809,13 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
 
 ///Proof of concept on something to call the tasks
 /// Mostly just used in testing right now but will probably be a timings task like send an event every minute, 10, etc
+/// forecast update is the only one that is on a timer. rest are just once for resting. GetTime does need to only really be ran once
+/// At start up for now
 #[embassy_executor::task]
 async fn random_10s(_spawner: Spawner) {
     let sender = WEB_REQUEST_EVENT_CHANNEL.sender();
     Timer::after(Duration::from_secs(10)).await;
     sender.send(WebRequestEvents::GetTime).await;
-    //Calls to get time from the an API
 
     Timer::after(Duration::from_secs(30)).await;
     sender.send(WebRequestEvents::UpdateForecast).await;
@@ -855,8 +834,11 @@ async fn random_10s(_spawner: Spawner) {
         .await;
         match futures {
             Either::First(_) => {
-                // we received are operating on the timer
-                // sender.send(WebRequestEvents::UpdateForecast).await;
+                sender.send(WebRequestEvents::UpdateForecast).await;
+                Timer::after(Duration::from_secs(10)).await;
+                sender
+                    .send(WebRequestEvents::CheckBlueSkyNotifications)
+                    .await;
             }
             Either::Second(_) => {
                 // we received the signal to stop

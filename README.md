@@ -1,5 +1,7 @@
 # An e-ink RP 2040 desk display 
 
+![Picture of the prototype on my desk](./repo/IMG_0595.jpg)
+
  This is a RP 2040 e-ink desk display with a firmware written in rust using embassy. The goal is to make this my most "professional" product.
 
  Goals:

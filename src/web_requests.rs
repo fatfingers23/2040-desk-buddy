@@ -4,30 +4,11 @@ use defmt::*;
 use embassy_net::{dns::DnsSocket, tcp::client::TcpClient};
 use heapless::{String, Vec};
 use reqwless::{
-    client::{HttpClient, HttpConnection},
-    request::{self, Method, Request, RequestBody},
+    client::HttpClient,
+    request::{Method, Request, RequestBody},
 };
 use serde::{Deserialize, Serialize};
 
-// https://api.open-meteo.com/v1/forecast?latitude=35.7512&longitude=-86.93&current=temperature_2m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit=fahrenheit&timezone=America/Chicago
-//Weather code meanings
-//     WMO Weather interpretation codes (WW)
-// Code 	Description
-// 0 	Clear sky
-// 1, 2, 3 	Mainly clear, partly cloudy, and overcast
-// 45, 48 	Fog and depositing rime fog
-// 51, 53, 55 	Drizzle: Light, moderate, and dense intensity
-// 56, 57 	Freezing Drizzle: Light and dense intensity
-// 61, 63, 65 	Rain: Slight, moderate and heavy intensity
-// 66, 67 	Freezing Rain: Light and heavy intensity
-// 71, 73, 75 	Snow fall: Slight, moderate, and heavy intensity
-// 77 	Snow grains
-// 80, 81, 82 	Rain showers: Slight, moderate, and violent
-// 85, 86 	Snow showers slight and heavy
-// 95 * 	Thunderstorm: Slight or moderate
-// 96, 99 * 	Thunderstorm with slight and heavy hail
-
-/// This is the response from the weather api
 /// You will notice I am using heapless::String instead of &str. I was having issues with sharing the struct between tasks
 /// because of str and decided to just go simple to keep moving
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
@@ -115,6 +96,7 @@ pub struct CreateSessionRequest<'a> {
     pub password: &'a str,
 }
 
+/// Goofy wrapper but lets me do one impl for RequestBody
 #[derive(Serialize)]
 pub struct WebRequestBody<'a, T> {
     pub body: &'a T,
@@ -162,47 +144,31 @@ pub struct GetUnreadCountResponse {
     pub count: i32,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct ListNotificationsResponse<'a> {
-    // pub cursor: &'a str,
     //This is hard coded for now
     pub notifications: Vec<Notification<'a>, 1>,
-    // pub priority: bool,
     #[serde(rename = "seenAt")]
     pub seen_at: &'a str,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct Notification<'a> {
-    // pub uri: &'a str,
-    // pub cid: &'a str,
     pub author: Author<'a>,
     pub reason: &'a str,
     #[serde(rename = "reasonSubject")]
     pub reason_subject: Option<&'a str>,
-    // pub record: serde_json::Value,
-    // #[serde(rename = "isRead")]
-    // pub is_read: bool,
-    // #[serde(rename = "indexedAt")]
-    // pub indexed_at: &'a str,
-    // pub labels: Vec<Label, 16>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct Author<'a> {
     // pub did: &'a str,
     pub handle: &'a str,
     #[serde(rename = "displayName")]
     pub display_name: &'a str,
-    // pub description: &'a str,
-    // pub avatar: &'a str,
-    // pub associated: Associated,
-    // #[serde(rename = "indexedAt")]
-    // pub indexed_at: &'a str,
-    // #[serde(rename = "createdAt")]
-    // pub created_at: &'a str,
-    // pub viewer: Viewer,
-    // pub labels: Vec<Label, 16>,
 }
 
 #[derive(Debug, Format)]
