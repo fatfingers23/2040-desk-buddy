@@ -67,7 +67,7 @@ pub fn draw_blue_sky_notification(
         display,
         &notification.last_notification.as_str(),
         starting_point.x + 40,
-        starting_point.y + 10,
+        starting_point.y + 15,
     );
 }
 

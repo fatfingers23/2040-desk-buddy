@@ -199,6 +199,7 @@ async fn main(spawner: Spawner) {
     spawner.must_spawn(display_task(r.display_peripherals));
 
     loop {
+        //TODO prob have a watch dog feed task in this loop
         debug!("I'm still alive");
         Timer::after(Duration::from_secs(300)).await;
     }
@@ -415,7 +416,7 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                             *daily_weather_code,
                             sunrise.clone(),
                             sunset.clone(),
-                            state.date_time_from_api.clone(),
+                            state.approximately_current_time.clone(),
                             i as u8,
                             &mut display,
                         );
@@ -773,11 +774,11 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
                     if let Ok(response) = result {
                         let last_notification_blur = match response.notifications[0].reason {
                             "like" => "\nhas liked your post",
-                            "repost" => " has reposted your post",
-                            "follow" => " has followed you",
-                            "mention" => " has mentioned you",
-                            "reply" => " has replied to you",
-                            "quote" => " has quoted you",
+                            "repost" => "\nhas reposted your post",
+                            "follow" => "\nhas followed you",
+                            "mention" => "\nhas mentioned you",
+                            "reply" => "\nhas replied to you",
+                            "quote" => "\nhas quoted you",
                             _ => " Not sure what happened here",
                         };
 
@@ -820,10 +821,11 @@ async fn random_10s(_spawner: Spawner) {
     Timer::after(Duration::from_secs(30)).await;
     sender.send(WebRequestEvents::UpdateForecast).await;
 
-    Timer::after(Duration::from_secs(10)).await;
-    sender
-        .send(WebRequestEvents::CheckBlueSkyNotifications)
-        .await;
+    //TODO pausing bluesky notifications for now till i can write a proper client
+    // Timer::after(Duration::from_secs(10)).await;
+    // sender
+    //     .send(WebRequestEvents::CheckBlueSkyNotifications)
+    //     .await;
 
     loop {
         // we either await on the timer or the signal, whichever comes first.
@@ -835,10 +837,11 @@ async fn random_10s(_spawner: Spawner) {
         match futures {
             Either::First(_) => {
                 sender.send(WebRequestEvents::UpdateForecast).await;
-                Timer::after(Duration::from_secs(10)).await;
-                sender
-                    .send(WebRequestEvents::CheckBlueSkyNotifications)
-                    .await;
+
+                // Timer::after(Duration::from_secs(10)).await;
+                // sender
+                //     .send(WebRequestEvents::CheckBlueSkyNotifications)
+                //     .await;
             }
             Either::Second(_) => {
                 // we received the signal to stop
