@@ -1,7 +1,7 @@
 use crate::env::env_value;
-use crate::io::easy_format_str;
+use crate::io::{easy_format_str, format_date, format_short_datetime, return_str_time};
 use crate::weather_icons;
-use crate::web_requests::{Current, CurrentUnits};
+use crate::web_requests::{Current, CurrentUnits, Daily};
 use defmt::*;
 use embassy_rp::rtc::DateTime;
 use embedded_graphics::mono_font::MonoFont;
@@ -268,21 +268,18 @@ pub fn draw_weather_forecast_box(
     .draw(display);
 
     // Writing the forecast content
-    let split: Vec<&str, 3> = daily_date.split("-").collect();
-    let _year = split[0];
-    let month = split[1];
-    let day = split[2];
+    let formatted_date = format_date(daily_date);
 
-    //HACK need to move to a function
-    let sun_rise_split: Vec<&str, 2> = sun_rise.split("T").collect();
-    let sun_rise_time = sun_rise_split[1];
-    let sun_set_split: Vec<&str, 2> = sun_set.split("T").collect();
-    let sun_set_time = sun_set_split[1];
+    let sun_rise_time = return_str_time(sun_rise.as_str());
+    let sun_set_time = return_str_time(sun_set.as_str());
 
     //Month/day text
     let mut formatting_buffer = [0u8; 520];
-    let month_day =
-        easy_format_str(format_args!("{}/{}", month, day), &mut formatting_buffer).unwrap();
+    let month_day = easy_format_str(
+        format_args!("{}/{}", formatted_date.month, formatted_date.day),
+        &mut formatting_buffer,
+    )
+    .unwrap();
 
     if let Some(current_datetime) = possible_current_datetime {
         let mut day_of_week_index = current_datetime.day_of_week as u8 + current_index;

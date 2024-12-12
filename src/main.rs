@@ -21,7 +21,7 @@ use embassy_rp::clocks::RoscRng;
 use embassy_rp::i2c::I2c;
 use embassy_rp::i2c::{self};
 use embassy_rp::peripherals::{self, I2C0};
-use embassy_rp::rtc::{DateTime, DayOfWeek, RtcError};
+use embassy_rp::rtc::{DateTime, RtcError};
 use embassy_rp::{
     gpio::{Input, Level, Output, Pull},
     spi::{self, Spi},
@@ -38,8 +38,8 @@ use epd_waveshare::{
     epd4in2_v2::{Display4in2, Epd4in2},
     prelude::*,
 };
-use heapless::{String, Vec};
-use io::{easy_format, easy_format_str};
+use heapless::String;
+use io::{easy_format, easy_format_str, format_long_datetime, format_short_datetime};
 use rand::RngCore;
 use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
 use reqwless::request::{Request, RequestBuilder};
@@ -341,6 +341,7 @@ async fn scd_task(_spawner: Spawner, i2c_bus: &'static I2c0Bus) {
     sensor.reinit().unwrap();
 
     sensor.start_periodic_measurement().unwrap();
+
     //Need to wait 5 seconds before first measurement
     Timer::after(Duration::from_secs(5)).await;
     loop {
@@ -372,9 +373,14 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
     let mut epd4in2 = Epd4in2::new(&mut spi_dev, busy, dc, rst, &mut embassy_time::Delay, None)
         .expect("eink initalize error");
 
+    epd4in2
+        .set_refresh(&mut spi_dev, &mut Delay, RefreshLut::Quick)
+        .unwrap();
+
     let mut display = Display4in2::default();
     //TODO need to come back and look at the epd driver I think there should be a cleaner clear function
     display.clear(Color::White).ok();
+
     // epd4in2.clear_frame(&mut spi_dev, &mut Delay);
     let _ = epd4in2.update_and_display_frame(&mut spi_dev, display.buffer(), &mut Delay);
 
@@ -424,22 +430,16 @@ pub async fn display_task(display_pins: DisplayPeripherals) {
                     }
 
                     //Current forecast
-                    //TODO Really should be a method
-                    //HACK finding out if it's night time. Really just need a method to parse these timestamps out to datetime or something
-                    let sunset_split = todays_sunset.split('T').collect::<Vec<&str, 2>>();
-                    let sun_set_time = sunset_split[1];
-                    let sun_set_time_split = sun_set_time.split(':').collect::<Vec<&str, 2>>();
-                    let sunset_hour = sun_set_time_split[0].parse::<u8>().unwrap();
-                    let sunset_minute = sun_set_time_split[1].parse::<u8>().unwrap();
+                    let sunset_datetime = format_short_datetime(todays_sunset);
                     let mut daytime = true;
                     if let Some(current_time) = state.approximately_current_time {
                         info!(
                             "Current time: {}:{}:{} ",
                             current_time.hour, current_time.minute, current_time.second
                         );
-                        if current_time.hour > sunset_hour
-                            || (sunset_hour == current_time.hour
-                                && current_time.minute > sunset_minute)
+                        if current_time.hour > sunset_datetime.hour
+                            || (sunset_datetime.hour == current_time.hour
+                                && current_time.minute > sunset_datetime.minute)
                         {
                             daytime = false;
                         }
@@ -638,39 +638,8 @@ async fn wireless_task(spawner: Spawner, cyw43_peripherals: Cyw43Peripherals) {
                 .await;
 
                 if let Ok(response) = result {
-                    //TODO need to hide this away in a method that returns a datetime from a string
-                    //Hell is empty and all the odd string manipulation code is here
-                    let datetime = response.datetime.split('T').collect::<Vec<&str, 2>>();
-                    //split at -
-                    let date = datetime[0].split('-').collect::<Vec<&str, 3>>();
-                    let year = date[0].parse::<u16>().unwrap();
-                    let month = date[1].parse::<u8>().unwrap();
-                    let day = date[2].parse::<u8>().unwrap();
-                    //split at :
-                    let time = datetime[1].split(':').collect::<Vec<&str, 4>>();
-                    let hour = time[0].parse::<u8>().unwrap();
-                    let minute = time[1].parse::<u8>().unwrap();
-                    //split at .
-                    let second_split = time[2].split('.').collect::<Vec<&str, 2>>();
-                    let second = second_split[0].parse::<f64>().unwrap();
-                    let rtc_time = DateTime {
-                        year: year,
-                        month: month,
-                        day: day,
-                        day_of_week: match response.day_of_week {
-                            0 => DayOfWeek::Sunday,
-                            1 => DayOfWeek::Monday,
-                            2 => DayOfWeek::Tuesday,
-                            3 => DayOfWeek::Wednesday,
-                            4 => DayOfWeek::Thursday,
-                            5 => DayOfWeek::Friday,
-                            6 => DayOfWeek::Saturday,
-                            _ => DayOfWeek::Sunday,
-                        },
-                        hour,
-                        minute,
-                        second: second as u8,
-                    };
+                    let rtc_time =
+                        format_long_datetime(response.datetime, Some(response.day_of_week));
                     info!("sending time to rtc");
                     sender.send(GeneralEvents::TimeFromApi(rtc_time)).await;
                 }
@@ -830,7 +799,10 @@ async fn random_10s(_spawner: Spawner) {
     loop {
         // we either await on the timer or the signal, whichever comes first.
         let futures = select(
-            Timer::after(Duration::from_secs(150)),
+            //TODO find the last update and calculate the time to the next update for just that first wait
+            //SO if another update is in 10 mins instead of 15 we wait 10 mins. then we can just have a 15 min timer
+            //Weather updates are only every 15 minutes
+            Timer::after(Duration::from_secs(900)),
             STOP_FIRST_RANDOM_SIGNAL.wait(),
         )
         .await;
