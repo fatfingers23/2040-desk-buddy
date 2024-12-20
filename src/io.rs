@@ -1,6 +1,4 @@
-use bt_hci::data;
 use core::fmt::Arguments;
-use defmt::info;
 use embassy_rp::rtc::{DateTime, DayOfWeek};
 use heapless::{String, Vec};
 

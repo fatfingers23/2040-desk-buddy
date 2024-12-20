@@ -1,5 +1,5 @@
 [package]
-name = "embassy_rp_w_template"
+name = "rp_2040_desk_buddy"
 version = "0.1.0"
 edition = "2021"
 

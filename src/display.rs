@@ -1,7 +1,7 @@
 use crate::env::env_value;
-use crate::io::{easy_format_str, format_date, format_short_datetime, return_str_time};
+use crate::io::{easy_format_str, format_date, return_str_time};
 use crate::weather_icons;
-use crate::web_requests::{Current, CurrentUnits, Daily};
+use crate::web_requests::{Current, CurrentUnits};
 use defmt::*;
 use embassy_rp::rtc::DateTime;
 use embedded_graphics::mono_font::MonoFont;
@@ -14,7 +14,7 @@ use embedded_graphics::{
     text::{Baseline, Text, TextStyleBuilder},
 };
 use epd_waveshare::color::Color;
-use heapless::{String, Vec};
+use heapless::String;
 use libm::{floor, roundf};
 use tinybmp::Bmp;
 
