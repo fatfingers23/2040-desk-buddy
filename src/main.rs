@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 #![feature(impl_trait_in_assoc_type)]
+#![allow(non_local_definitions)]
 
 use assign_resources::assign_resources;
 use core::cell::RefCell;
